@@ -1,0 +1,5 @@
+{
+  "name": "AI 投资 Agent",
+  "description": "基于 MVP 原则的 AI 股票投资分析助手，提供结构化投资思考、财报解读及市场情绪分析。",
+  "requestFramePermissions": []
+}
