@@ -124,7 +124,12 @@ const StockList: React.FC<StockListProps> = ({ stocks, selectedId, onSelect, onA
              <p className="text-[10px] text-slate-300 mt-1">请使用上方搜索框添加</p>
           </div>
         ) : (
-          stocks.map((stock) => (
+          stocks.map((stock) => {
+            const safePrice = Number.isFinite(stock.price) ? stock.price : 0;
+            const safeChange = Number.isFinite(stock.change) ? stock.change : 0;
+            const safeChangePercent = Number.isFinite(stock.changePercent) ? stock.changePercent : 0;
+
+            return (
             <div 
               key={stock.id}
               className={`group relative border-b border-slate-50 transition-all overflow-hidden ${
@@ -140,11 +145,11 @@ const StockList: React.FC<StockListProps> = ({ stocks, selectedId, onSelect, onA
                   <span className="text-[9px] text-slate-500 uppercase tracking-wider truncate max-w-[100px]">{stock.name}</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Sparkline data={stock.sparkline} color={stock.change >= 0 ? '#10b981' : '#ef4444'} />
+                  <Sparkline data={stock.sparkline} color={safeChange >= 0 ? '#10b981' : '#ef4444'} />
                   <div className="flex flex-col items-end min-w-[70px]">
-                    <span className="font-bold text-slate-900 text-sm">{stock.price.toFixed(2)}</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${stock.change >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                      {stock.change >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                    <span className="font-bold text-slate-900 text-sm">{safePrice.toFixed(2)}</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${safeChange >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                      {safeChange >= 0 ? '+' : ''}{safeChangePercent.toFixed(2)}%
                     </span>
                   </div>
                 </div>
@@ -166,7 +171,8 @@ const StockList: React.FC<StockListProps> = ({ stocks, selectedId, onSelect, onA
                 </button>
               </div>
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

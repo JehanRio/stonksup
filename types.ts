@@ -1,8 +1,9 @@
 
-export type Timeframe = 'INTRADAY' | '1W' | '1M' | 'YTD';
+export type Timeframe = 'INTRADAY' | '5D' | 'DAILY' | 'MONTHLY';
 
 export interface OHLC {
   time: string;
+  timestamp?: number;
   open: number;
   high: number;
   low: number;

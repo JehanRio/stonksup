@@ -12,9 +12,39 @@ interface YahooParams {
 
 const TIMEFRAME_MAP: Record<Timeframe, YahooParams> = {
   'INTRADAY': { interval: '5m', range: '1d' },
-  '1W': { interval: '15m', range: '5d' },
-  '1M': { interval: '1d', range: '1mo' },
-  'YTD': { interval: '1d', range: 'ytd' }
+  '5D': { interval: '15m', range: '5d' },
+  'DAILY': { interval: '1d', range: '1y' },
+  'MONTHLY': { interval: '1mo', range: '10y' }
+};
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value !== 'number') return null;
+  return Number.isFinite(value) ? value : null;
+};
+
+const getPreviousClose = (meta: any, closeSeries: Array<number | null | undefined>, currentPrice: number): number => {
+  const metaPreviousClose =
+    toFiniteNumber(meta?.previousClose) ??
+    toFiniteNumber(meta?.chartPreviousClose) ??
+    toFiniteNumber(meta?.previousChartClose);
+
+  if (metaPreviousClose !== null && metaPreviousClose !== 0) {
+    return metaPreviousClose;
+  }
+
+  const validCloses = closeSeries
+    .map((value) => toFiniteNumber(value))
+    .filter((value): value is number => value !== null);
+
+  if (validCloses.length >= 2) {
+    return validCloses[validCloses.length - 2];
+  }
+
+  if (validCloses.length === 1) {
+    return validCloses[0];
+  }
+
+  return currentPrice;
 };
 
 export const searchStocks = async (query: string): Promise<Partial<Stock>[]> => {
@@ -83,34 +113,45 @@ export const fetchStockHistory = async (symbol: string, timeframe: Timeframe): P
     const quote = result.indicators.quote[0];
     const timestamps = result.timestamp || [];
     const meta = result.meta;
+    const currentPrice =
+      toFiniteNumber(meta?.regularMarketPrice) ??
+      toFiniteNumber(meta?.postMarketPrice) ??
+      toFiniteNumber(meta?.previousClose) ??
+      0;
+    const previousClose = getPreviousClose(meta, quote.close || [], currentPrice);
 
     const history: OHLC[] = timestamps.map((ts: number, i: number) => {
       const date = new Date(ts * 1000);
       let timeStr = '';
       
-      if (timeframe === 'INTRADAY' || timeframe === '1W') {
+      if (timeframe === 'INTRADAY' || timeframe === '5D') {
         timeStr = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      } else if (timeframe === 'MONTHLY') {
+        timeStr = date.toLocaleDateString('zh-CN', { year: '2-digit', month: '2-digit' });
       } else {
         timeStr = date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
       }
 
       return {
         time: timeStr,
-        open: quote.open[i] || quote.close[i-1] || meta.previousClose,
-        high: quote.high[i] || quote.close[i-1] || meta.previousClose,
-        low: quote.low[i] || quote.close[i-1] || meta.previousClose,
-        close: quote.close[i] || quote.open[i] || meta.previousClose,
-        volume: quote.volume[i] || 0
+        timestamp: ts,
+        open: toFiniteNumber(quote.open?.[i]) ?? toFiniteNumber(quote.close?.[i - 1]) ?? previousClose,
+        high: toFiniteNumber(quote.high?.[i]) ?? toFiniteNumber(quote.close?.[i - 1]) ?? previousClose,
+        low: toFiniteNumber(quote.low?.[i]) ?? toFiniteNumber(quote.close?.[i - 1]) ?? previousClose,
+        close: toFiniteNumber(quote.close?.[i]) ?? toFiniteNumber(quote.open?.[i]) ?? previousClose,
+        volume: toFiniteNumber(quote.volume?.[i]) ?? 0
       };
     }).filter((item: any) => item.close !== null && item.close !== undefined);
 
     const sparkline = history.slice(-10).map(h => h.close);
+    const change = currentPrice - previousClose;
+    const changePercent = previousClose === 0 ? 0 : (change / previousClose) * 100;
 
     return {
       history,
-      currentPrice: meta.regularMarketPrice,
-      change: meta.regularMarketPrice - meta.previousClose,
-      changePercent: ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100,
+      currentPrice,
+      change,
+      changePercent,
       sparkline
     };
   } catch (error) {
@@ -120,7 +161,7 @@ export const fetchStockHistory = async (symbol: string, timeframe: Timeframe): P
 };
 
 export const fetchStockSummaries = async (symbols: string[]): Promise<Stock[]> => {
-  const promises = symbols.map(s => fetchStockHistory(s, '1W').catch(() => null));
+  const promises = symbols.map(s => fetchStockHistory(s, '5D').catch(() => null));
   const results = await Promise.all(promises);
   
   return results.map((res, i) => {
