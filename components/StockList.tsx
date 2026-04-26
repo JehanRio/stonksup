@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Stock } from '../types';
 import Sparkline from './Sparkline';
 import { searchStocks } from '../services/stockService';
@@ -20,159 +19,176 @@ const StockList: React.FC<StockListProps> = ({ stocks, selectedId, onSelect, onA
 
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (searchQuery.trim().length >= 1) {
-        setIsSearching(true);
-        const results = await searchStocks(searchQuery);
-        setSearchResults(results);
-        setIsSearching(false);
-      } else {
+      if (searchQuery.trim().length < 1) {
         setSearchResults([]);
+        return;
       }
-    }, 500);
+
+      setIsSearching(true);
+      const results = await searchStocks(searchQuery);
+      setSearchResults(results);
+      setIsSearching(false);
+    }, 350);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
   return (
-    <div className="flex flex-col h-full bg-white border-r border-slate-200 overflow-hidden">
-      <div className="p-4 border-b border-slate-100 bg-white z-10 space-y-3 shadow-sm">
-        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-           <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-           </svg>
-           自选股市场
-        </h2>
-        
-        {/* Search Input */}
+    <div className="flex h-full flex-col overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]">
+      <div className="border-b border-slate-200 px-5 pb-5 pt-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Watchlist</div>
+            <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-900">自选市场</h2>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-right shadow-sm">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-slate-400">Symbols</div>
+            <div className="mt-1 text-lg font-bold text-slate-900">{stocks.length}</div>
+          </div>
+        </div>
+
         <div className="relative">
           <input
             type="text"
-            placeholder="搜索股票代码 (如 BABA, 0700.HK)"
+            placeholder="搜索股票代码，如 BABA / 0700.HK"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-400"
+            onChange={(event) => setSearchQuery(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm text-slate-700 shadow-sm outline-none transition focus:border-blue-400"
           />
-          <svg className="w-4 h-4 absolute left-3 top-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto relative">
-        {/* Search Results Overlay */}
+      <div className="relative flex-1 overflow-y-auto px-3 pb-3 pt-3">
         {searchQuery.length > 0 && (
-          <div className="absolute inset-0 bg-white z-20">
+          <div className="absolute inset-3 z-20 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-2xl">
             {isSearching ? (
-              <div className="p-10 flex flex-col items-center gap-3">
-                <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-xs text-slate-500 font-medium">同步交易所联想词...</span>
+              <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-3">
+                <div className="h-7 w-7 rounded-full border-2 border-blue-600 border-t-transparent animate-spin"></div>
+                <span className="text-sm text-slate-500">搜索中...</span>
               </div>
             ) : searchResults.length > 0 ? (
-              <div className="divide-y divide-slate-50">
-                <div className="px-4 py-2 bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-widest">搜索结果</div>
-                {searchResults.map((res) => (
+              <div className="divide-y divide-slate-100">
+                <div className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">搜索结果</div>
+                {searchResults.map((result) => (
                   <button
-                    key={res.symbol}
+                    key={result.symbol}
+                    type="button"
                     onClick={() => {
-                      onAddStock(res.symbol!);
+                      onAddStock(result.symbol!);
                       setSearchQuery('');
                     }}
-                    className="w-full flex items-center justify-between p-4 hover:bg-blue-50 transition-colors text-left group"
+                    className="flex w-full items-center justify-between px-4 py-4 text-left transition hover:bg-slate-50"
                   >
                     <div>
-                      <div className="font-bold text-slate-900 text-sm group-hover:text-blue-600">{res.symbol}</div>
-                      <div className="text-[10px] text-slate-500 truncate max-w-[160px]">{res.name}</div>
+                      <div className="text-sm font-bold text-slate-900">{result.symbol}</div>
+                      <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500">{result.name}</div>
                     </div>
-                    <div className="w-7 h-7 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                    </div>
+                    <div className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white">加入</div>
                   </button>
                 ))}
               </div>
             ) : (
-              <div className="p-12 text-center">
-                <div className="text-3xl mb-3">🔍</div>
-                <div className="text-xs text-slate-400 font-medium italic">未找到匹配的股票代码</div>
+              <div className="flex h-full min-h-[180px] items-center justify-center px-8 text-center text-sm text-slate-500">
+                没有找到匹配代码。
               </div>
             )}
           </div>
         )}
 
-        {/* Watchlist */}
         {loading ? (
-          <div className="p-6 space-y-6">
-             {[1,2,3,4,5].map(i => (
-               <div key={i} className="animate-pulse flex justify-between">
-                 <div className="space-y-2">
-                   <div className="h-4 w-12 bg-slate-100 rounded"></div>
-                   <div className="h-3 w-20 bg-slate-50 rounded"></div>
-                 </div>
-                 <div className="h-8 w-24 bg-slate-50 rounded"></div>
-               </div>
-             ))}
+          <div className="space-y-3 p-2">
+            {[1, 2, 3, 4, 5].map((item) => (
+              <div key={item} className="rounded-[24px] border border-slate-200 bg-white p-4 animate-pulse">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <div className="h-4 w-16 rounded bg-slate-100"></div>
+                    <div className="h-3 w-24 rounded bg-slate-50"></div>
+                  </div>
+                  <div className="h-10 w-24 rounded-2xl bg-slate-50"></div>
+                </div>
+              </div>
+            ))}
           </div>
         ) : stocks.length === 0 ? (
-          <div className="p-12 text-center">
-             <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100">
-               <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-               </svg>
-             </div>
-             <p className="text-sm text-slate-400 font-medium">暂无自选股</p>
-             <p className="text-[10px] text-slate-300 mt-1">请使用上方搜索框添加</p>
+          <div className="flex h-full min-h-[320px] flex-col items-center justify-center rounded-[26px] border border-dashed border-slate-200 bg-white px-8 text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-50">
+              <svg className="h-8 w-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              </svg>
+            </div>
+            <div className="mt-4 text-base font-semibold text-slate-900">暂无自选股票</div>
+            <div className="mt-2 text-sm leading-6 text-slate-500">先通过上方搜索框加入你要跟踪的标的。</div>
           </div>
         ) : (
-          stocks.map((stock) => {
-            const safePrice = Number.isFinite(stock.price) ? stock.price : 0;
-            const safeChange = Number.isFinite(stock.change) ? stock.change : 0;
-            const safeChangePercent = Number.isFinite(stock.changePercent) ? stock.changePercent : 0;
+          <div className="space-y-3">
+            {stocks.map((stock) => {
+              const safePrice = Number.isFinite(stock.price) ? stock.price : 0;
+              const safeChange = Number.isFinite(stock.change) ? stock.change : 0;
+              const safeChangePercent = Number.isFinite(stock.changePercent) ? stock.changePercent : 0;
+              const active = selectedId === stock.id;
 
-            return (
-            <div 
-              key={stock.id}
-              className={`group relative border-b border-slate-50 transition-all overflow-hidden ${
-                selectedId === stock.id ? 'bg-blue-50/60' : 'hover:bg-slate-50'
-              }`}
-            >
-              <button
-                onClick={() => onSelect(stock.id)}
-                className="w-full flex items-center justify-between p-4 text-left"
-              >
-                <div className="flex flex-col items-start">
-                  <span className={`font-bold text-sm ${selectedId === stock.id ? 'text-blue-700' : 'text-slate-900'}`}>{stock.symbol}</span>
-                  <span className="text-[9px] text-slate-500 uppercase tracking-wider truncate max-w-[100px]">{stock.name}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Sparkline data={stock.sparkline} color={safeChange >= 0 ? '#10b981' : '#ef4444'} />
-                  <div className="flex flex-col items-end min-w-[70px]">
-                    <span className="font-bold text-slate-900 text-sm">{safePrice.toFixed(2)}</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${safeChange >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                      {safeChange >= 0 ? '+' : ''}{safeChangePercent.toFixed(2)}%
-                    </span>
-                  </div>
-                </div>
-              </button>
-              
-              {/* Delete Button - Better visibility and placement */}
-              <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveStock(stock.symbol);
-                  }}
-                  className="w-6 h-6 flex items-center justify-center bg-white/80 hover:bg-red-50 text-slate-300 hover:text-red-500 rounded-full border border-slate-100 shadow-sm transition-colors backdrop-blur-sm"
-                  title="从自选股中删除"
+              return (
+                <div
+                  key={stock.id}
+                  className={`group relative overflow-hidden rounded-[24px] border transition ${
+                    active
+                      ? 'border-blue-300 bg-[linear-gradient(135deg,rgba(239,246,255,1)_0%,rgba(255,255,255,1)_100%)] shadow-[0_16px_40px_-28px_rgba(37,99,235,0.5)]'
+                      : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+                  }`}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            );
-          })
+                  <button type="button" onClick={() => onSelect(stock.id)} className="w-full p-4 text-left">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-base font-bold ${active ? 'text-blue-700' : 'text-slate-900'}`}>{stock.symbol}</span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              safeChange >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                            }`}
+                          >
+                            {safeChange >= 0 ? 'Up' : 'Down'}
+                          </span>
+                        </div>
+                        <div className="mt-1 truncate text-xs text-slate-500">{stock.name}</div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRemoveStock(stock.symbol);
+                        }}
+                        className="opacity-0 transition group-hover:opacity-100"
+                        title="删除自选"
+                      >
+                        <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:border-rose-200 hover:text-rose-500">
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="mt-4 flex items-end justify-between gap-4">
+                      <div>
+                        <div className="text-2xl font-bold tracking-tight text-slate-900">{safePrice.toFixed(2)}</div>
+                        <div className={`mt-1 text-sm font-semibold ${safeChange >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {safeChange >= 0 ? '+' : ''}
+                          {safeChange.toFixed(2)} / {safeChangePercent.toFixed(2)}%
+                        </div>
+                      </div>
+                      <div className="rounded-2xl bg-slate-50 px-3 py-2">
+                        <Sparkline data={stock.sparkline} color={safeChange >= 0 ? '#10b981' : '#ef4444'} />
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

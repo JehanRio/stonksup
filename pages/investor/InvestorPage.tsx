@@ -1,180 +1,356 @@
-
-import React, { useState, useEffect } from 'react';
-import { Stock, NewsItem } from '../../types';
-import StockList from '../../components/StockList';
-import NewsSection from '../../components/NewsSection';
-import AnalysisPanel from '../../components/AnalysisPanel';
+import React, { useEffect, useState } from 'react';
+import { NewsItem, OHLC, Stock, Timeframe } from '../../types';
 import ProfilePage from '../../components/ProfilePage';
-import { fetchStockSummaries, fetchMarketNews } from '../../services/stockService';
+import WatchlistSidebar from '../../components/tradingview/WatchlistSidebar';
+import MarketSummaryPage from '../../components/tradingview/MarketSummaryPage';
+import StockDetailPage from '../../components/tradingview/StockDetailPage';
+import FullChartPage from '../../components/tradingview/FullChartPage';
+import { fetchMarketNews, fetchStockHistory, fetchStockSummaries } from '../../services/stockService';
 
 const WATCHLIST_STORAGE_KEY = 'ai_investor_watchlist';
-const DEFAULT_SYMBOLS = ['NVDA', 'AAPL', 'TSLA', 'MSFT', 'GOOGL'];
+const DEFAULT_SYMBOLS = ['NVDA', 'AAPL', 'TSLA', 'MSFT', 'GOOGL', 'AMZN', 'META'];
 
-export const InvestorPage: React.FC = () => {
+type InvestorView = 'summary' | 'detail' | 'full-chart' | 'journal';
+
+const DEFAULT_TAB_TITLE = 'Trading Desk';
+
+type InvestorRoute = {
+  view: InvestorView;
+  symbol: string | null;
+  detailTimeframe?: Timeframe;
+  fullChartTimeframe?: Timeframe;
+};
+
+const parseTimeframe = (value: string | null): Timeframe | undefined => {
+  if (value === 'INTRADAY' || value === '5D' || value === 'DAILY' || value === 'MONTHLY') return value;
+  return undefined;
+};
+
+const parseInvestorHash = (): InvestorRoute => {
+  const rawHash = window.location.hash || '#/investor/summary';
+  const hash = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
+  const [pathPart, queryPart] = hash.split('?');
+  const segments = pathPart.split('/').filter(Boolean);
+  const params = new URLSearchParams(queryPart || '');
+
+  if (segments[0] !== 'investor') {
+    return { view: 'summary', symbol: null };
+  }
+
+  if (segments[1] === 'journal') {
+    return { view: 'journal', symbol: null };
+  }
+
+  if (segments[1] === 'stock' && segments[2]) {
+    const symbol = decodeURIComponent(segments[2]).toUpperCase();
+
+    if (segments[3] === 'chart') {
+      return {
+        view: 'full-chart',
+        symbol,
+        fullChartTimeframe: parseTimeframe(params.get('tf')) ?? 'DAILY',
+      };
+    }
+
+    return {
+      view: 'detail',
+      symbol,
+      detailTimeframe: parseTimeframe(params.get('tf')) ?? 'INTRADAY',
+    };
+  }
+
+  return { view: 'summary', symbol: null };
+};
+
+const buildInvestorHash = (route: InvestorRoute) => {
+  if (route.view === 'journal') return '#/investor/journal';
+  if (route.view === 'summary') return '#/investor/summary';
+  if (!route.symbol) return '#/investor/summary';
+
+  if (route.view === 'full-chart') {
+    return `#/investor/stock/${encodeURIComponent(route.symbol)}/chart?tf=${route.fullChartTimeframe ?? 'DAILY'}`;
+  }
+
+  return `#/investor/stock/${encodeURIComponent(route.symbol)}?tf=${route.detailTimeframe ?? 'INTRADAY'}`;
+};
+
+const InvestorPage: React.FC = () => {
+  const initialRoute = parseInvestorHash();
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(() => {
     const saved = localStorage.getItem(WATCHLIST_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : DEFAULT_SYMBOLS;
+    const stored = saved ? JSON.parse(saved) : DEFAULT_SYMBOLS;
+    if (initialRoute.symbol && !stored.includes(initialRoute.symbol)) {
+      return [initialRoute.symbol, ...stored];
+    }
+    return stored;
   });
-  
   const [stocks, setStocks] = useState<Stock[]>([]);
-  const [marketNews, setMarketNews] = useState<NewsItem[]>([]);
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [selectedStockId, setSelectedStockId] = useState<string | null>(() => {
+    if (initialRoute.symbol) return initialRoute.symbol;
     const saved = localStorage.getItem(WATCHLIST_STORAGE_KEY);
     const symbols = saved ? JSON.parse(saved) : DEFAULT_SYMBOLS;
-    return symbols.length > 0 ? symbols[0] : null;
+    return symbols[0] || null;
   });
-  
-  const [currentPage, setCurrentPage] = useState<'main' | 'profile'>('main');
-  const [newsToInterpret, setNewsToInterpret] = useState<NewsItem | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [newsLoading, setNewsLoading] = useState(false);
+  const [view, setView] = useState<InvestorView>(initialRoute.view);
+  const [summaryHistory, setSummaryHistory] = useState<OHLC[]>([]);
+  const [detailHistory, setDetailHistory] = useState<OHLC[]>([]);
+  const [fullChartHistory, setFullChartHistory] = useState<OHLC[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [fullChartLoading, setFullChartLoading] = useState(false);
+  const [detailTimeframe, setDetailTimeframe] = useState<Timeframe>(initialRoute.detailTimeframe ?? 'INTRADAY');
+  const [fullChartTimeframe, setFullChartTimeframe] = useState<Timeframe>(initialRoute.fullChartTimeframe ?? 'DAILY');
 
   useEffect(() => {
     localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlistSymbols));
   }, [watchlistSymbols]);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setNewsLoading(true);
-      try {
-        const stockData = await fetchStockSummaries(watchlistSymbols);
-        setStocks(stockData);
-        
-        const newsData = await fetchMarketNews('market news');
-        setMarketNews(newsData);
-      } catch (err) {
-        console.error("Failed to load global data", err);
-      } finally {
-        setLoading(false);
-        setNewsLoading(false);
+    return () => {
+      document.title = DEFAULT_TAB_TITLE;
+    };
+  }, []);
+
+  useEffect(() => {
+    const applyHashRoute = () => {
+      const route = parseInvestorHash();
+
+      if (route.symbol) {
+        setWatchlistSymbols((prev) => (prev.includes(route.symbol!) ? prev : [route.symbol!, ...prev]));
+        setSelectedStockId(route.symbol);
+      }
+
+      setView(route.view);
+
+      if (route.detailTimeframe) {
+        setDetailTimeframe(route.detailTimeframe);
+      }
+
+      if (route.fullChartTimeframe) {
+        setFullChartTimeframe(route.fullChartTimeframe);
       }
     };
 
-    loadData();
-    const interval = setInterval(async () => {
-      const stockData = await fetchStockSummaries(watchlistSymbols);
-      setStocks(stockData);
-      const newsData = await fetchMarketNews('market news');
-      setMarketNews(newsData);
-    }, 60000); 
-    
-    return () => clearInterval(interval);
+    window.addEventListener('hashchange', applyHashRoute);
+    applyHashRoute();
+
+    return () => window.removeEventListener('hashchange', applyHashRoute);
+  }, []);
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      try {
+        const [stockData, newsData] = await Promise.all([
+          fetchStockSummaries(watchlistSymbols),
+          fetchMarketNews('market news'),
+        ]);
+        setStocks(stockData);
+        setNews(newsData);
+      } catch (error) {
+        console.error('Failed to load dashboard', error);
+      }
+    };
+
+    loadDashboard();
+    const interval = window.setInterval(loadDashboard, 60000);
+    return () => window.clearInterval(interval);
   }, [watchlistSymbols]);
 
-  const selectedStock = stocks.find(s => s.id === selectedStockId) || null;
+  const selectedStock = stocks.find((item) => item.id === selectedStockId) || null;
+
+  useEffect(() => {
+    if (view === 'journal') {
+      document.title = 'Trading Journal';
+      return;
+    }
+
+    if (!selectedStock || !Number.isFinite(selectedStock.price) || !Number.isFinite(selectedStock.changePercent)) {
+      document.title = DEFAULT_TAB_TITLE;
+      return;
+    }
+
+    const changePrefix = selectedStock.changePercent >= 0 ? '+' : '';
+    document.title = `${selectedStock.symbol} ${selectedStock.price.toFixed(2)} ${changePrefix}${selectedStock.changePercent.toFixed(2)}%`;
+  }, [selectedStock, view]);
+
+  useEffect(() => {
+    const nextHash = buildInvestorHash({
+      view,
+      symbol: selectedStockId,
+      detailTimeframe,
+      fullChartTimeframe,
+    });
+
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, '', nextHash);
+    }
+  }, [detailTimeframe, fullChartTimeframe, selectedStockId, view]);
+
+  useEffect(() => {
+    const symbol = selectedStock?.symbol;
+    if (!symbol) return;
+
+    const loadSummaryHistory = async () => {
+      setSummaryLoading(true);
+      try {
+        const result = await fetchStockHistory(symbol, 'INTRADAY');
+        setSummaryHistory(result.history);
+      } catch (error) {
+        console.error('Failed to load summary history', error);
+        setSummaryHistory([]);
+      } finally {
+        setSummaryLoading(false);
+      }
+    };
+
+    loadSummaryHistory();
+  }, [selectedStock?.symbol]);
+
+  useEffect(() => {
+    if (view !== 'detail' && view !== 'full-chart') return;
+    const symbol = selectedStock?.symbol;
+    if (!symbol) return;
+
+    const loadDetailHistory = async () => {
+      setDetailLoading(true);
+      try {
+        const result = await fetchStockHistory(symbol, detailTimeframe);
+        setDetailHistory(result.history);
+      } catch (error) {
+        console.error('Failed to load detail history', error);
+        setDetailHistory([]);
+      } finally {
+        setDetailLoading(false);
+      }
+    };
+
+    loadDetailHistory();
+  }, [detailTimeframe, selectedStock?.symbol, view]);
+
+  useEffect(() => {
+    if (view !== 'full-chart') return;
+    const symbol = selectedStock?.symbol;
+    if (!symbol) return;
+
+    const loadFullChartHistory = async () => {
+      setFullChartLoading(true);
+      try {
+        const result = await fetchStockHistory(symbol, fullChartTimeframe);
+        setFullChartHistory(result.history);
+      } catch (error) {
+        console.error('Failed to load full chart history', error);
+        setFullChartHistory([]);
+      } finally {
+        setFullChartLoading(false);
+      }
+    };
+
+    loadFullChartHistory();
+  }, [fullChartTimeframe, selectedStock?.symbol, view]);
+
+  const handleOpenStock = (symbol: string) => {
+    setSelectedStockId(symbol);
+    setDetailTimeframe('INTRADAY');
+    setView('detail');
+  };
 
   const handleAddStock = (symbol: string) => {
-    const upperSymbol = symbol.toUpperCase();
-    if (!watchlistSymbols.includes(upperSymbol)) {
-      setWatchlistSymbols(prev => [upperSymbol, ...prev]);
-    }
-    setSelectedStockId(upperSymbol);
+    const upper = symbol.toUpperCase();
+    setWatchlistSymbols((prev) => (prev.includes(upper) ? prev : [upper, ...prev]));
+    setSelectedStockId(upper);
+    setView('detail');
   };
 
   const handleRemoveStock = (symbol: string) => {
-    setWatchlistSymbols(prev => {
-      const next = prev.filter(s => s !== symbol);
+    setWatchlistSymbols((prev) => {
+      const next = prev.filter((item) => item !== symbol);
       if (selectedStockId === symbol) {
-        setSelectedStockId(next.length > 0 ? next[0] : null);
+        setSelectedStockId(next[0] || null);
       }
       return next;
     });
   };
 
-  const handleInterpretNews = (news: NewsItem) => {
-    setNewsToInterpret(news);
-    if (currentPage !== 'main') setCurrentPage('main');
+  const renderMainContent = () => {
+    if (view === 'journal') {
+      return (
+        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-[#07090c] text-white">
+          <div className="flex h-14 items-center justify-between border-b border-white/10 bg-[#0a0d11] px-5">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">交易日记</div>
+              <div className="text-xs text-slate-500">本地保存的复盘记录和 AI 修正建议</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setView('summary')}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              返回市场总览
+            </button>
+          </div>
+          <div className="flex-1">
+            <ProfilePage />
+          </div>
+        </div>
+      );
+    }
+
+    if (view === 'detail') {
+      return (
+        <StockDetailPage
+          stock={selectedStock}
+          history={detailHistory}
+          news={news}
+          timeframe={detailTimeframe}
+          loading={detailLoading}
+          onBack={() => setView('summary')}
+          onOpenFullChart={() => setView('full-chart')}
+          onChangeTimeframe={setDetailTimeframe}
+        />
+      );
+    }
+
+    if (view === 'full-chart') {
+      return (
+        <FullChartPage
+          stock={selectedStock}
+          history={fullChartHistory}
+          timeframe={fullChartTimeframe}
+          loading={fullChartLoading}
+          onBack={() => setView('detail')}
+          onChangeTimeframe={setFullChartTimeframe}
+        />
+      );
+    }
+
+    return (
+      <MarketSummaryPage
+        selectedStock={selectedStock}
+        stocks={stocks}
+        history={summaryHistory}
+        historyLoading={summaryLoading}
+        news={news}
+        onOpenStock={handleOpenStock}
+        onOpenJournal={() => setView('journal')}
+      />
+    );
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Navigation Header */}
-      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-          <span className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-indigo-800">
-            AI 投资 Agent
-          </span>
-        </div>
-
-        <nav className="flex items-center gap-1">
-          <button 
-            onClick={() => setCurrentPage('main')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${currentPage === 'main' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'text-slate-500 hover:bg-slate-50'}`}
-          >
-            行情分析
-          </button>
-          <button 
-            onClick={() => setCurrentPage('profile')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${currentPage === 'profile' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'text-slate-500 hover:bg-slate-50'}`}
-          >
-            策略中心
-          </button>
-        </nav>
-      </div>
-
-      {/* Main Content Area */}
-      <main className="flex-1 flex overflow-hidden">
-        {currentPage === 'main' ? (
-          <>
-            <aside className="w-80 shrink-0">
-              <StockList 
-                stocks={stocks} 
-                selectedId={selectedStockId} 
-                onSelect={setSelectedStockId}
-                onAddStock={handleAddStock}
-                onRemoveStock={handleRemoveStock}
-                loading={loading && stocks.length === 0}
-              />
-            </aside>
-
-            <section className="flex-1 flex flex-col overflow-hidden relative">
-              <div className="flex-1 flex flex-col overflow-y-auto bg-slate-50/50">
-                <div className="flex-1 flex flex-col">
-                   <AnalysisPanel 
-                     stock={selectedStock} 
-                     relevantNews={marketNews}
-                     triggerNews={newsToInterpret}
-                   />
-                </div>
-                
-                <div className="p-6">
-                  <NewsSection 
-                    news={marketNews} 
-                    onInterpret={handleInterpretNews} 
-                    loading={newsLoading}
-                  />
-                </div>
-              </div>
-            </section>
-          </>
-        ) : (
-          <div className="flex-1 overflow-y-auto">
-            <ProfilePage />
-          </div>
-        )}
-      </main>
-
-      <div className="h-8 bg-white border-t border-slate-200 px-4 flex items-center justify-between shrink-0 text-[9px] text-slate-400 font-medium">
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1">
-            <span className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse"></span>
-            行情源: Yahoo Finance 
-          </span>
-        </div>
-        <div className="flex gap-4 items-center">
-          <span>同步频率: 60s / 次</span>
-          <span>更新于: {new Date().toLocaleTimeString('zh-CN', {hour12: false})}</span>
-        </div>
-      </div>
+    <div className="flex h-full overflow-hidden bg-[#07090c]">
+      <div className={`min-w-0 flex-1 ${view === 'journal' ? 'overflow-y-auto' : 'overflow-hidden'}`}>{renderMainContent()}</div>
+      {view !== 'journal' && (
+        <WatchlistSidebar
+          stocks={stocks}
+          selectedId={selectedStockId}
+          onOpenStock={handleOpenStock}
+          onRemoveStock={handleRemoveStock}
+          onAddStock={handleAddStock}
+        />
+      )}
     </div>
   );
 };
 
 export default InvestorPage;
-

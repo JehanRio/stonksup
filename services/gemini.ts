@@ -126,3 +126,86 @@ ${newsContext ? `[本地参考资讯]:\n${newsContext}` : "[暂无本地资讯]"
     };
   }
 };
+
+export const generateJournalReview = async (journal: {
+  date: string;
+  marketPhase: string;
+  positionPlan: string;
+  marketNotes: string;
+  hotThemes: string;
+  targetStocks: string;
+  logicValidation: string;
+  buyPlan: string;
+  sellRules: string;
+  contingencyPlan: string;
+  dailySummary: string;
+}): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const currentTime = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+  const prompt = `
+当前时间：${currentTime}
+复盘日期：${journal.date}
+
+你要扮演一名严谨的短线交易复盘教练。请基于以下日记内容，给出结构化评价和修正建议。
+
+市场阶段：${journal.marketPhase || '未填写'}
+次日仓位计划：${journal.positionPlan || '未填写'}
+
+1. 大盘与情绪分析：
+${journal.marketNotes || '未填写'}
+
+2. 热点板块：
+${journal.hotThemes || '未填写'}
+
+3. 目标个股：
+${journal.targetStocks || '未填写'}
+
+4. 消息面与逻辑验证：
+${journal.logicValidation || '未填写'}
+
+5. 买入计划：
+${journal.buyPlan || '未填写'}
+
+6. 卖出纪律：
+${journal.sellRules || '未填写'}
+
+7. 应变预案：
+${journal.contingencyPlan || '未填写'}
+
+8. 每日总结：
+${journal.dailySummary || '未填写'}
+
+请严格按以下结构输出，使用中文：
+
+一、总评
+- 简要评价这篇复盘是否完整、是否有清晰交易闭环
+
+二、做得好的地方
+- 列出 2 到 4 条
+
+三、主要问题
+- 列出 2 到 5 条
+- 重点指出逻辑跳跃、证据不足、计划模糊、纪律缺失
+
+四、修正建议
+- 给出可执行的修正动作，不要空泛
+
+五、明日最该盯住的重点
+- 给出 3 条以内最重要事项
+`;
+
+  try {
+    const response = await generateWithRetry(ai, 'gemini-3-flash-preview', {
+      contents: prompt,
+      config: {
+        temperature: 0.5,
+      },
+    });
+
+    return response.text || 'AI 未返回有效评价。';
+  } catch (error: any) {
+    console.error('Journal Review Error:', error);
+    return `AI 评价失败: ${error.message || '未知原因'}`;
+  }
+};
