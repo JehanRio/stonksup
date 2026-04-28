@@ -308,7 +308,7 @@ ${p}`)}return s}),Ef=h$(yO);/**
 要求：
 - 不做情绪量化分数
 - 不推导价格结论
-- 只解释“为什么会这样感受”`},oj=t=>new Promise(e=>setTimeout(e,t)),AO=async(t,e,n,i=1)=>{var o,s;let r;for(let u=0;u<=i;u++)try{return await t.models.generateContent({model:e,...n})}catch(c){if(r=c,(o=c.message)!=null&&o.includes("429")||c.status===429){if((s=n.config)!=null&&s.tools&&u===0){console.warn("联网搜索配额限制，尝试降级为无搜索模式...");const f={...n,config:{...n.config,tools:void 0}};return await t.models.generateContent({model:e,...f})}if(u<i){const f=Math.pow(2,u+1)*1e3;await oj(f);continue}}throw c}throw r},aj=async(t,e,n)=>{var u,c,f,d,p,g;const i=new TO({apiKey:""}),r=n.slice(0,5).map(x=>`新闻标题: ${x.title}
+- 只解释“为什么会这样感受”`},oj=t=>new Promise(e=>setTimeout(e,t)),AO=async(t,e,n,i=1)=>{var o,s;let r;for(let u=0;u<=i;u++)try{return await t.models.generateContent({model:e,...n})}catch(c){if(r=c,(o=c.message)!=null&&o.includes("429")||c.status===429){if((s=n.config)!=null&&s.tools&&u===0){console.warn("联网搜索配额限制，尝试降级为无搜索模式...");const f={...n,config:{...n.config,tools:void 0}};return await t.models.generateContent({model:e,...f})}if(u<i){const f=Math.pow(2,u+1)*1e3;await oj(f);continue}}throw c}throw r},aj=async(t,e,n)=>{var u,c,f,d,p,g;const i=new TO({apiKey:"AIzaSyBgczc8_Sjx-4gcgNhv6iidQxXbDJtra2U"}),r=n.slice(0,5).map(x=>`新闻标题: ${x.title}
 内容: ${x.content}`).join(`
 ---
 `),s=`
@@ -326,7 +326,7 @@ ${r}`:"[暂无本地资讯]"}
 
 `+_);const M=(p=(d=(f=w.candidates)==null?void 0:f[0])==null?void 0:d.groundingMetadata)==null?void 0:p.groundingChunks;return M&&M.forEach(I=>{I.web&&I.web.uri&&E.push({title:I.web.title||"参考来源",uri:I.web.uri})}),{text:_,sources:E}}catch(x){return console.error("Gemini Error:",x),(g=x.message)!=null&&g.includes("429")?{text:`【请求过于频繁】Gemini 免费额度已耗尽。请：
 1. 点击右上角绑定付费 API Key。
-2. 稍等一分钟后再试。`,sources:[]}:{text:`分析失败: ${x.message||"未知原因"}。`,sources:[]}}},sj=async t=>{const e=new TO({apiKey:""}),i=`
+2. 稍等一分钟后再试。`,sources:[]}:{text:`分析失败: ${x.message||"未知原因"}。`,sources:[]}}},sj=async t=>{const e=new TO({apiKey:"AIzaSyBgczc8_Sjx-4gcgNhv6iidQxXbDJtra2U"}),i=`
 当前时间：${new Date().toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})}
 复盘日期：${t.date}
 
