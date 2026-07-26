@@ -17,6 +17,7 @@ permissions:
 env:
   IMAGE_NAME: ghcr.io/jehanrio/stonksup
   BACKEND_IMAGE_NAME: ghcr.io/jehanrio/stonksup-backend
+  DATABASE_IMAGE_NAME: ghcr.io/jehanrio/stonksup-pgvector
   DEPLOY_DIR: /root/workspace/stonksup
 
 jobs:
@@ -69,6 +70,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Mirror pgvector image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: database
+          push: true
+          tags: ${{ env.DATABASE_IMAGE_NAME }}:0.8.2-pg17
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=database
+          cache-to: type=gha,mode=max,scope=database
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
