@@ -21,8 +21,53 @@ env:
   DEPLOY_DIR: /root/workspace/stonksup
 
 jobs:
+  seed_tcr:
+    name: Seed Tencent TCR from production cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$SERVER_HOST"
+          test -n "$SERVER_SSH_PRIVATE_KEY"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SERVER_SSH_PRIVATE_KEY" > ~/.ssh/stonksup
+          chmod 600 ~/.ssh/stonksup
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Seed images from production server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
+        run: |
+          printf '%s' "$TCR_PASSWORD" | ssh -i ~/.ssh/stonksup \
+            "$SERVER_USER@$SERVER_HOST" \
+            "docker login '$TCR_REGISTRY' -u '$TCR_USERNAME' --password-stdin"
+          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" 'bash -s' <<EOF
+          set -Eeuo pipefail
+          web_image=\$(docker inspect --format '{{.Image}}' stonksup-web)
+          backend_image=\$(docker inspect --format '{{.Image}}' stonksup-backend)
+          database_image=\$(docker inspect --format '{{.Image}}' stonksup-db)
+          docker tag "\$web_image" "$IMAGE_NAME:${{ github.sha }}"
+          docker tag "\$web_image" "$IMAGE_NAME:latest"
+          docker tag "\$backend_image" "$BACKEND_IMAGE_NAME:${{ github.sha }}"
+          docker tag "\$backend_image" "$BACKEND_IMAGE_NAME:latest"
+          docker tag "\$database_image" "$DATABASE_IMAGE_NAME:0.8.2-pg17-alpine"
+          docker push "$IMAGE_NAME:${{ github.sha }}"
+          docker push "$IMAGE_NAME:latest"
+          docker push "$BACKEND_IMAGE_NAME:${{ github.sha }}"
+          docker push "$BACKEND_IMAGE_NAME:latest"
+          docker push "$DATABASE_IMAGE_NAME:0.8.2-pg17-alpine"
+          EOF
+
   build:
     name: Test, build, and publish
+    needs: seed_tcr
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
