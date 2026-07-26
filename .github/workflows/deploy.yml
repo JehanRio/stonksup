@@ -70,12 +70,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mirror pgvector image to GHCR
+      - name: Build optimized pgvector image
         uses: docker/build-push-action@v6
         with:
           context: database
           push: true
-          tags: ${{ env.DATABASE_IMAGE_NAME }}:0.8.2-pg17
+          tags: ${{ env.DATABASE_IMAGE_NAME }}:0.8.2-pg17-alpine
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

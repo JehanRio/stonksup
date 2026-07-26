@@ -2,7 +2,7 @@ name: stonksup
 
 services:
   database:
-    image: ${STONKSUP_DATABASE_IMAGE:-ghcr.io/jehanrio/stonksup-pgvector:0.8.2-pg17}
+    image: ${STONKSUP_DATABASE_IMAGE:-ghcr.io/jehanrio/stonksup-pgvector:0.8.2-pg17-alpine}
     container_name: stonksup-db
     restart: unless-stopped
     environment:

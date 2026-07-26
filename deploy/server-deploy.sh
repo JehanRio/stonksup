@@ -5,6 +5,7 @@ APP_DIR="${APP_DIR:-/root/workspace/stonksup}"
 LEGACY_DIR="${LEGACY_DIR:-/root/workspace/ai-investment-agent}"
 PORT="${STONKSUP_PORT:-3000}"
 RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-.env.runtime}"
+DATABASE_BASE_IMAGE="${STONKSUP_DATABASE_BASE_IMAGE:-mirror.ccs.tencentyun.com/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
 WEB_HEALTH_URL="http://127.0.0.1:${PORT}/healthz"
 API_HEALTH_URL="http://127.0.0.1:${PORT}/api/v1/health/ready"
 
@@ -31,6 +32,7 @@ compose() {
 }
 
 compose config --quiet
+docker pull "$DATABASE_BASE_IMAGE"
 compose pull
 
 legacy_was_running=0
