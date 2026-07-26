@@ -37,7 +37,11 @@ docker pull "$DATABASE_BASE_IMAGE"
 if ! docker pull "$BACKEND_BASE_IMAGE"; then
   echo "Backend base image warm-up failed; continuing with the GHCR image." >&2
 fi
-compose pull
+if [[ "${STONKSUP_BACKEND_PRELOADED:-0}" == "1" ]]; then
+  compose pull database web
+else
+  compose pull
+fi
 
 legacy_was_running=0
 previous_web_image="$(docker inspect --format '{{.Config.Image}}' stonksup-web 2>/dev/null || true)"

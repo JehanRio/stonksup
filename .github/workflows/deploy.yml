@@ -136,9 +136,32 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           test -n "$SERVER_USER"
-          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" "mkdir -p '$DEPLOY_DIR'"
+          git archive --format=tar.gz --output=/tmp/stonksup-backend-source.tgz HEAD backend
+          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
+            "mkdir -p '$DEPLOY_DIR/.build/${{ github.sha }}'"
           scp -i ~/.ssh/stonksup compose.yaml deploy/server-deploy.sh \
             "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/"
+          scp -i ~/.ssh/stonksup /tmp/stonksup-backend-source.tgz \
+            "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/backend-source-${{ github.sha }}.tgz"
+
+      - name: Build backend on production host
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
+            "set -e && \
+             tar -xzf '$DEPLOY_DIR/backend-source-${{ github.sha }}.tgz' \
+               -C '$DEPLOY_DIR/.build/${{ github.sha }}' && \
+             docker pull mirror.ccs.tencentyun.com/library/python:3.13-slim && \
+             cd '$DEPLOY_DIR/.build/${{ github.sha }}' && \
+             docker build \
+               --build-arg PYTHON_BASE_IMAGE=mirror.ccs.tencentyun.com/library/python:3.13-slim \
+               --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+               --file backend/Dockerfile \
+               --tag '$BACKEND_IMAGE_NAME:${{ github.sha }}' . && \
+             cd '$DEPLOY_DIR' && \
+             rm -rf '.build/${{ github.sha }}' 'backend-source-${{ github.sha }}.tgz'"
 
       - name: Authenticate server to GHCR
         env:
@@ -156,4 +179,5 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
-            "cd '$DEPLOY_DIR' && chmod +x server-deploy.sh && IMAGE_TAG='${{ github.sha }}' ./server-deploy.sh"
+            "cd '$DEPLOY_DIR' && chmod +x server-deploy.sh && \
+             IMAGE_TAG='${{ github.sha }}' STONKSUP_BACKEND_PRELOADED=1 ./server-deploy.sh"
