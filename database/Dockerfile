@@ -12,9 +12,23 @@ ADD https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.
 
 RUN mkdir -p /tmp/pgvector-src /tmp/pgvector-install \
     && tar -xzf /tmp/pgvector.tar.gz --strip-components=1 -C /tmp/pgvector-src \
-    && make -C /tmp/pgvector-src PG_CONFIG=/usr/bin/pg_config OPTFLAGS="" \
-    && make -C /tmp/pgvector-src PG_CONFIG=/usr/bin/pg_config \
-         DESTDIR=/tmp/pgvector-install install
+    && test -f /usr/lib/postgresql17/pgxs/src/makefiles/pgxs.mk \
+    && make -C /tmp/pgvector-src \
+         PG_CONFIG=/usr/local/bin/pg_config \
+         PGXS=/usr/lib/postgresql17/pgxs/src/makefiles/pgxs.mk \
+         includedir_server=/usr/include/postgresql/17/server \
+         includedir_internal=/usr/include/postgresql/internal \
+         pkglibdir=/usr/lib/postgresql17 \
+         datadir=/usr/share/postgresql17 \
+         with_llvm=no OPTFLAGS="" \
+    && make -C /tmp/pgvector-src \
+         PG_CONFIG=/usr/local/bin/pg_config \
+         PGXS=/usr/lib/postgresql17/pgxs/src/makefiles/pgxs.mk \
+         includedir_server=/usr/include/postgresql/17/server \
+         includedir_internal=/usr/include/postgresql/internal \
+         pkglibdir=/usr/lib/postgresql17 \
+         datadir=/usr/share/postgresql17 \
+         with_llvm=no DESTDIR=/tmp/pgvector-install install
 
 FROM ${POSTGRES_BASE}
 
