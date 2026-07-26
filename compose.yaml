@@ -2,7 +2,7 @@ name: stonksup
 
 services:
   database:
-    image: ${STONKSUP_DATABASE_IMAGE:-ghcr.io/jehanrio/stonksup-pgvector:0.8.2-pg17-alpine}
+    image: ${STONKSUP_DATABASE_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-pgvector:0.8.2-pg17-alpine}
     container_name: stonksup-db
     restart: unless-stopped
     environment:
@@ -19,7 +19,7 @@ services:
       retries: 6
 
   backend:
-    image: ${STONKSUP_BACKEND_IMAGE:-ghcr.io/jehanrio/stonksup-backend}:${IMAGE_TAG:-latest}
+    image: ${STONKSUP_BACKEND_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-backend}:${IMAGE_TAG:-latest}
     container_name: stonksup-backend
     restart: unless-stopped
     environment:
@@ -43,7 +43,7 @@ services:
       retries: 4
 
   web:
-    image: ${STONKSUP_IMAGE:-ghcr.io/jehanrio/stonksup}:${IMAGE_TAG:-latest}
+    image: ${STONKSUP_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-web}:${IMAGE_TAG:-latest}
     container_name: stonksup-web
     restart: unless-stopped
     depends_on:

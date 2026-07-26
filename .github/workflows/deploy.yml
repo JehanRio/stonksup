@@ -12,12 +12,12 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/jehanrio/stonksup
-  BACKEND_IMAGE_NAME: ghcr.io/jehanrio/stonksup-backend
-  DATABASE_IMAGE_NAME: ghcr.io/jehanrio/stonksup-pgvector
+  TCR_REGISTRY: ccr.ccs.tencentyun.com
+  IMAGE_NAME: ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-web
+  BACKEND_IMAGE_NAME: ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-backend
+  DATABASE_IMAGE_NAME: ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-pgvector
   DEPLOY_DIR: /root/workspace/stonksup
 
 jobs:
@@ -63,12 +63,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Tencent TCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.TCR_REGISTRY }}
+          username: ${{ secrets.TCR_USERNAME }}
+          password: ${{ secrets.TCR_PASSWORD }}
 
       - name: Build optimized pgvector image
         uses: docker/build-push-action@v6
@@ -136,42 +136,20 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           test -n "$SERVER_USER"
-          git archive --format=tar.gz --output=/tmp/stonksup-backend-source.tgz HEAD backend
-          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
-            "mkdir -p '$DEPLOY_DIR/.build/${{ github.sha }}'"
+          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" "mkdir -p '$DEPLOY_DIR'"
           scp -i ~/.ssh/stonksup compose.yaml deploy/server-deploy.sh \
             "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/"
-          scp -i ~/.ssh/stonksup /tmp/stonksup-backend-source.tgz \
-            "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/backend-source-${{ github.sha }}.tgz"
 
-      - name: Build backend on production host
+      - name: Authenticate server to Tencent TCR
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
         run: |
-          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
-            "set -e && \
-             tar -xzf '$DEPLOY_DIR/backend-source-${{ github.sha }}.tgz' \
-               -C '$DEPLOY_DIR/.build/${{ github.sha }}' && \
-             docker pull mirror.ccs.tencentyun.com/library/python:3.13-slim && \
-             cd '$DEPLOY_DIR/.build/${{ github.sha }}' && \
-             docker build \
-               --build-arg PYTHON_BASE_IMAGE=mirror.ccs.tencentyun.com/library/python:3.13-slim \
-               --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-               --file backend/Dockerfile \
-               --tag '$BACKEND_IMAGE_NAME:${{ github.sha }}' . && \
-             cd '$DEPLOY_DIR' && \
-             rm -rf '.build/${{ github.sha }}' 'backend-source-${{ github.sha }}.tgz'"
-
-      - name: Authenticate server to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/stonksup \
+          printf '%s' "$TCR_PASSWORD" | ssh -i ~/.ssh/stonksup \
             "$SERVER_USER@$SERVER_HOST" \
-            "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+            "docker login '$TCR_REGISTRY' -u '$TCR_USERNAME' --password-stdin"
 
       - name: Deploy full stack
         env:
@@ -179,5 +157,4 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
-            "cd '$DEPLOY_DIR' && chmod +x server-deploy.sh && \
-             IMAGE_TAG='${{ github.sha }}' STONKSUP_BACKEND_PRELOADED=1 ./server-deploy.sh"
+            "cd '$DEPLOY_DIR' && chmod +x server-deploy.sh && IMAGE_TAG='${{ github.sha }}' ./server-deploy.sh"
