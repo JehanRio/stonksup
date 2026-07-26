@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,53 +21,8 @@ env:
   DEPLOY_DIR: /root/workspace/stonksup
 
 jobs:
-  seed_tcr:
-    name: Seed Tencent TCR from production cache
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Configure SSH
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
-        run: |
-          test -n "$SERVER_HOST"
-          test -n "$SERVER_SSH_PRIVATE_KEY"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SERVER_SSH_PRIVATE_KEY" > ~/.ssh/stonksup
-          chmod 600 ~/.ssh/stonksup
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
-
-      - name: Seed images from production server
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
-          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
-        run: |
-          printf '%s' "$TCR_PASSWORD" | ssh -i ~/.ssh/stonksup \
-            "$SERVER_USER@$SERVER_HOST" \
-            "docker login '$TCR_REGISTRY' -u '$TCR_USERNAME' --password-stdin"
-          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" 'bash -s' <<EOF
-          set -Eeuo pipefail
-          web_image=\$(docker inspect --format '{{.Image}}' stonksup-web)
-          backend_image=\$(docker inspect --format '{{.Image}}' stonksup-backend)
-          database_image=\$(docker inspect --format '{{.Image}}' stonksup-db)
-          docker tag "\$web_image" "$IMAGE_NAME:${{ github.sha }}"
-          docker tag "\$web_image" "$IMAGE_NAME:latest"
-          docker tag "\$backend_image" "$BACKEND_IMAGE_NAME:${{ github.sha }}"
-          docker tag "\$backend_image" "$BACKEND_IMAGE_NAME:latest"
-          docker tag "\$database_image" "$DATABASE_IMAGE_NAME:0.8.2-pg17-alpine"
-          docker push "$IMAGE_NAME:${{ github.sha }}"
-          docker push "$IMAGE_NAME:latest"
-          docker push "$BACKEND_IMAGE_NAME:${{ github.sha }}"
-          docker push "$BACKEND_IMAGE_NAME:latest"
-          docker push "$DATABASE_IMAGE_NAME:0.8.2-pg17-alpine"
-          EOF
-
   build:
     name: Test, build, and publish
-    needs: seed_tcr
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -140,20 +95,6 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: backend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.BACKEND_IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
 
   deploy:
     name: Deploy production
@@ -181,9 +122,13 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           test -n "$SERVER_USER"
-          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" "mkdir -p '$DEPLOY_DIR'"
+          git archive --format=tar.gz --output=/tmp/stonksup-backend-source.tgz HEAD backend
+          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
+            "mkdir -p '$DEPLOY_DIR/.build/${{ github.sha }}'"
           scp -i ~/.ssh/stonksup compose.yaml deploy/server-deploy.sh \
             "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/"
+          scp -i ~/.ssh/stonksup /tmp/stonksup-backend-source.tgz \
+            "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/backend-source-${{ github.sha }}.tgz"
 
       - name: Authenticate server to Tencent TCR
         env:
@@ -195,6 +140,30 @@ jobs:
           printf '%s' "$TCR_PASSWORD" | ssh -i ~/.ssh/stonksup \
             "$SERVER_USER@$SERVER_HOST" \
             "docker login '$TCR_REGISTRY' -u '$TCR_USERNAME' --password-stdin"
+
+      - name: Build and push backend inside Tencent Cloud
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/stonksup "$SERVER_USER@$SERVER_HOST" \
+            "set -e && \
+             tar -xzf '$DEPLOY_DIR/backend-source-${{ github.sha }}.tgz' \
+               -C '$DEPLOY_DIR/.build/${{ github.sha }}' && \
+             docker pull mirror.ccs.tencentyun.com/library/python:3.13-slim && \
+             cd '$DEPLOY_DIR/.build/${{ github.sha }}' && \
+             docker build \
+               --build-arg PYTHON_BASE_IMAGE=mirror.ccs.tencentyun.com/library/python:3.13-slim \
+               --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+               --label org.opencontainers.image.source='${{ github.server_url }}/${{ github.repository }}' \
+               --label org.opencontainers.image.revision='${{ github.sha }}' \
+               --file backend/Dockerfile \
+               --tag '$BACKEND_IMAGE_NAME:${{ github.sha }}' \
+               --tag '$BACKEND_IMAGE_NAME:latest' . && \
+             docker push '$BACKEND_IMAGE_NAME:${{ github.sha }}' && \
+             docker push '$BACKEND_IMAGE_NAME:latest' && \
+             cd '$DEPLOY_DIR' && \
+             rm -rf '.build/${{ github.sha }}' 'backend-source-${{ github.sha }}.tgz'"
 
       - name: Deploy full stack
         env:
