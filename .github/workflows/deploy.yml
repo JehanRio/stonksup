@@ -16,6 +16,7 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/jehanrio/stonksup
+  BACKEND_IMAGE_NAME: ghcr.io/jehanrio/stonksup-backend
   DEPLOY_DIR: /root/workspace/stonksup
 
 jobs:
@@ -26,16 +27,36 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Test backend and migrations
+        working-directory: backend
+        run: python -m pytest --cov=app --cov-report=term-missing
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build application
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Build frontend
         run: npm run build
 
       - name: Set up Docker Buildx
@@ -48,7 +69,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -59,8 +80,23 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
   deploy:
     name: Deploy production
@@ -102,7 +138,7 @@ jobs:
             "$SERVER_USER@$SERVER_HOST" \
             "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
 
-      - name: Deploy image
+      - name: Deploy full stack
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}

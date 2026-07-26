@@ -47,6 +47,46 @@ const getPreviousClose = (meta: any, closeSeries: Array<number | null | undefine
   return currentPrice;
 };
 
+const buildHistoryTimeLabel = (timestamp: number, timeframe: Timeframe) => {
+  const date = new Date(timestamp * 1000);
+
+  if (timeframe === 'INTRADAY' || timeframe === '5D') {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  if (timeframe === 'MONTHLY') {
+    return date.toLocaleDateString('zh-CN', { year: '2-digit', month: '2-digit' });
+  }
+
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+};
+
+const normalizeYahooHistoryPoint = (quote: any, timestamp: number, index: number, timeframe: Timeframe): OHLC | null => {
+  const open = toFiniteNumber(quote.open?.[index]);
+  const high = toFiniteNumber(quote.high?.[index]);
+  const low = toFiniteNumber(quote.low?.[index]);
+  const close = toFiniteNumber(quote.close?.[index]);
+
+  if (open === null || high === null || low === null || close === null) {
+    return null;
+  }
+
+  return {
+    time: buildHistoryTimeLabel(timestamp, timeframe),
+    timestamp,
+    open,
+    high: Math.max(high, open, close),
+    low: Math.min(low, open, close),
+    close,
+    volume: toFiniteNumber(quote.volume?.[index]) ?? 0
+  };
+};
+
+const sortAndDedupeHistory = (history: OHLC[]) =>
+  [...history]
+    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+    .filter((item, index, rows) => index === 0 || item.timestamp !== rows[index - 1].timestamp);
+
 export const searchStocks = async (query: string): Promise<Partial<Stock>[]> => {
   if (!query) return [];
   const url = `${PROXY_URL}${encodeURIComponent(`${SEARCH_URL}${query}`)}`;
@@ -110,38 +150,25 @@ export const fetchStockHistory = async (symbol: string, timeframe: Timeframe): P
     if (!json.chart?.result) throw new Error('No data found');
     
     const result = json.chart.result[0];
-    const quote = result.indicators.quote[0];
+    const quote = result.indicators.quote?.[0];
+    if (!quote) throw new Error('No quote data found');
+
     const timestamps = result.timestamp || [];
     const meta = result.meta;
-    const currentPrice =
+    let currentPrice =
       toFiniteNumber(meta?.regularMarketPrice) ??
       toFiniteNumber(meta?.postMarketPrice) ??
       toFiniteNumber(meta?.previousClose) ??
       0;
     const previousClose = getPreviousClose(meta, quote.close || [], currentPrice);
 
-    const history: OHLC[] = timestamps.map((ts: number, i: number) => {
-      const date = new Date(ts * 1000);
-      let timeStr = '';
-      
-      if (timeframe === 'INTRADAY' || timeframe === '5D') {
-        timeStr = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-      } else if (timeframe === 'MONTHLY') {
-        timeStr = date.toLocaleDateString('zh-CN', { year: '2-digit', month: '2-digit' });
-      } else {
-        timeStr = date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
-      }
+    const history = sortAndDedupeHistory(
+      timestamps
+        .map((ts: number, i: number) => normalizeYahooHistoryPoint(quote, ts, i, timeframe))
+        .filter((item): item is OHLC => item !== null)
+    );
 
-      return {
-        time: timeStr,
-        timestamp: ts,
-        open: toFiniteNumber(quote.open?.[i]) ?? toFiniteNumber(quote.close?.[i - 1]) ?? previousClose,
-        high: toFiniteNumber(quote.high?.[i]) ?? toFiniteNumber(quote.close?.[i - 1]) ?? previousClose,
-        low: toFiniteNumber(quote.low?.[i]) ?? toFiniteNumber(quote.close?.[i - 1]) ?? previousClose,
-        close: toFiniteNumber(quote.close?.[i]) ?? toFiniteNumber(quote.open?.[i]) ?? previousClose,
-        volume: toFiniteNumber(quote.volume?.[i]) ?? 0
-      };
-    }).filter((item: any) => item.close !== null && item.close !== undefined);
+    currentPrice = currentPrice || history.at(-1)?.close || 0;
 
     const sparkline = history.slice(-10).map(h => h.close);
     const change = currentPrice - previousClose;

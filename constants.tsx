@@ -14,18 +14,18 @@ const generateMockHistory = (basePrice: number, timeframe: Timeframe): OHLC[] =>
     count = 40;
     intervalMs = 15 * 60 * 1000; // 15 mins
     formatOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
-  } else if (timeframe === '1W') {
-    count = 7;
+  } else if (timeframe === '5D') {
+    count = 5;
     intervalMs = 24 * 60 * 60 * 1000;
     formatOptions = { weekday: 'short' };
-  } else if (timeframe === '1M') {
-    count = 30;
+  } else if (timeframe === 'DAILY') {
+    count = 60;
     intervalMs = 24 * 60 * 60 * 1000;
     formatOptions = { month: '2-digit', day: '2-digit' };
-  } else if (timeframe === 'YTD') {
+  } else if (timeframe === 'MONTHLY') {
     count = 60;
-    intervalMs = 3 * 24 * 60 * 60 * 1000; // Every 3 days for YTD view
-    formatOptions = { month: 'short', day: '2-digit' };
+    intervalMs = 30 * 24 * 60 * 60 * 1000;
+    formatOptions = { year: '2-digit', month: '2-digit' };
   }
 
   // Generate backwards from now

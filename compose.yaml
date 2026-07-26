@@ -1,10 +1,54 @@
 name: stonksup
 
 services:
+  database:
+    image: pgvector/pgvector:0.8.2-pg17
+    container_name: stonksup-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stonksup
+      POSTGRES_USER: stonksup
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - stonksup-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stonksup -d stonksup"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 6
+
+  backend:
+    image: ${STONKSUP_BACKEND_IMAGE:-ghcr.io/jehanrio/stonksup-backend}:${IMAGE_TAG:-latest}
+    container_name: stonksup-backend
+    restart: unless-stopped
+    environment:
+      STONKSUP_ENVIRONMENT: production
+      STONKSUP_BUILD_SHA: ${IMAGE_TAG:-latest}
+      STONKSUP_DATABASE_URL: postgresql+psycopg://stonksup:${POSTGRES_PASSWORD}@database:5432/stonksup
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=2)",
+        ]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 4
+
   web:
     image: ${STONKSUP_IMAGE:-ghcr.io/jehanrio/stonksup}:${IMAGE_TAG:-latest}
     container_name: stonksup-web
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
     ports:
       - "${STONKSUP_PORT:-3000}:80"
     healthcheck:
@@ -13,3 +57,6 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 3
+
+volumes:
+  stonksup-postgres:

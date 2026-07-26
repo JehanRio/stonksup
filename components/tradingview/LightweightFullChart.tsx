@@ -150,7 +150,7 @@ const LightweightFullChart: React.FC<LightweightFullChartProps> = ({ data, heigh
     const maSeries = MOVING_AVERAGE_PERIODS.map((period) =>
       chart.addSeries(LineSeries, {
         color: maColors[period],
-        lineWidth: period === 200 ? 2 : 1.5,
+        lineWidth: period === 200 ? 2 : 1,
         crosshairMarkerVisible: false,
         lastValueVisible: true,
         priceLineVisible: false,

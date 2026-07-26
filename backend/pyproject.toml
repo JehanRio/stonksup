@@ -1,0 +1,18 @@
+[project]
+name = "stonksup-backend"
+version = "0.1.0"
+description = "FastAPI backend for the StonksUp AI investment decision workspace"
+requires-python = ">=3.11,<3.14"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

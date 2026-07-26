@@ -1,0 +1,1 @@
+"""StonksUp backend application package."""

@@ -211,6 +211,18 @@ const KLineChart: React.FC<KLineChartProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const preventPageScroll = (event: WheelEvent) => {
+      event.preventDefault();
+    };
+
+    viewport.addEventListener('wheel', preventPageScroll, { passive: false });
+    return () => viewport.removeEventListener('wheel', preventPageScroll);
+  }, []);
+
   const safeRange = useMemo(() => {
     const start = clamp(range.start, 0, maxIndex);
     const end = clamp(range.end, start, maxIndex);
@@ -251,7 +263,6 @@ const KLineChart: React.FC<KLineChartProps> = ({
   const handleWheel: React.WheelEventHandler<HTMLDivElement> = (event) => {
     if (chartData.length <= minVisiblePoints) return;
 
-    event.preventDefault();
     const container = viewportRef.current;
     if (!container) return;
 

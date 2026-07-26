@@ -114,6 +114,7 @@ const InvestorPage: React.FC = () => {
 
   useEffect(() => {
     const applyHashRoute = () => {
+      if (!window.location.hash.startsWith('#/investor')) return;
       const route = parseInvestorHash();
 
       if (route.symbol) {
@@ -175,6 +176,8 @@ const InvestorPage: React.FC = () => {
   }, [selectedStock, view]);
 
   useEffect(() => {
+    if (!window.location.hash.startsWith('#/investor')) return;
+
     const nextHash = buildInvestorHash({
       view,
       symbol: selectedStockId,
@@ -190,63 +193,75 @@ const InvestorPage: React.FC = () => {
   useEffect(() => {
     const symbol = selectedStock?.symbol;
     if (!symbol) return;
+    let active = true;
 
     const loadSummaryHistory = async () => {
       setSummaryLoading(true);
       try {
         const result = await fetchStockHistory(symbol, 'INTRADAY');
-        setSummaryHistory(result.history);
+        if (active) setSummaryHistory(result.history);
       } catch (error) {
         console.error('Failed to load summary history', error);
-        setSummaryHistory([]);
+        if (active) setSummaryHistory([]);
       } finally {
-        setSummaryLoading(false);
+        if (active) setSummaryLoading(false);
       }
     };
 
     loadSummaryHistory();
+    return () => {
+      active = false;
+    };
   }, [selectedStock?.symbol]);
 
   useEffect(() => {
     if (view !== 'detail' && view !== 'full-chart') return;
     const symbol = selectedStock?.symbol;
     if (!symbol) return;
+    let active = true;
 
     const loadDetailHistory = async () => {
       setDetailLoading(true);
       try {
         const result = await fetchStockHistory(symbol, detailTimeframe);
-        setDetailHistory(result.history);
+        if (active) setDetailHistory(result.history);
       } catch (error) {
         console.error('Failed to load detail history', error);
-        setDetailHistory([]);
+        if (active) setDetailHistory([]);
       } finally {
-        setDetailLoading(false);
+        if (active) setDetailLoading(false);
       }
     };
 
     loadDetailHistory();
+    return () => {
+      active = false;
+    };
   }, [detailTimeframe, selectedStock?.symbol, view]);
 
   useEffect(() => {
     if (view !== 'full-chart') return;
     const symbol = selectedStock?.symbol;
     if (!symbol) return;
+    let active = true;
 
     const loadFullChartHistory = async () => {
       setFullChartLoading(true);
       try {
         const result = await fetchStockHistory(symbol, fullChartTimeframe);
-        setFullChartHistory(result.history);
+        if (active) setFullChartHistory(result.history);
       } catch (error) {
         console.error('Failed to load full chart history', error);
-        setFullChartHistory([]);
+        if (active) setFullChartHistory([]);
       } finally {
-        setFullChartLoading(false);
+        if (active) setFullChartLoading(false);
       }
     };
 
     loadFullChartHistory();
+    return () => {
+      active = false;
+    };
   }, [fullChartTimeframe, selectedStock?.symbol, view]);
 
   const handleOpenStock = (symbol: string) => {
@@ -278,13 +293,13 @@ const InvestorPage: React.FC = () => {
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-[#07090c] text-white">
           <div className="flex h-14 items-center justify-between border-b border-white/10 bg-[#0a0d11] px-5">
             <div>
-              <div className="text-sm font-semibold text-slate-900">交易日记</div>
-              <div className="text-xs text-slate-500">本地保存的复盘记录和 AI 修正建议</div>
+              <div className="text-sm font-semibold text-white">交易日记</div>
+              <div className="text-xs text-white/50">本地保存的复盘记录和 AI 修正建议</div>
             </div>
             <button
               type="button"
               onClick={() => setView('summary')}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="rounded-lg border border-white/10 bg-white px-3 py-1.5 text-sm font-semibold text-[#05070a] transition hover:bg-white/90"
             >
               返回市场总览
             </button>

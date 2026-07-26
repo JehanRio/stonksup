@@ -4,7 +4,9 @@ set -Eeuo pipefail
 APP_DIR="${APP_DIR:-/root/workspace/stonksup}"
 LEGACY_DIR="${LEGACY_DIR:-/root/workspace/ai-investment-agent}"
 PORT="${STONKSUP_PORT:-3000}"
-HEALTH_URL="http://127.0.0.1:${PORT}/healthz"
+RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-.env.runtime}"
+WEB_HEALTH_URL="http://127.0.0.1:${PORT}/healthz"
+API_HEALTH_URL="http://127.0.0.1:${PORT}/api/v1/health/ready"
 
 : "${IMAGE_TAG:?IMAGE_TAG must be set to the Git commit SHA}"
 
@@ -12,11 +14,27 @@ cd "$APP_DIR"
 requested_tag="$IMAGE_TAG"
 export IMAGE_TAG STONKSUP_PORT="$PORT"
 
-docker compose config --quiet
-docker compose pull web
+if [[ ! -s "$RUNTIME_ENV_FILE" ]]; then
+  umask 077
+  if command -v openssl >/dev/null 2>&1; then
+    database_password="$(openssl rand -hex 24)"
+  else
+    database_password="$(tr -d '-' < /proc/sys/kernel/random/uuid)$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+  fi
+  printf 'POSTGRES_PASSWORD=%s\n' "$database_password" > "$RUNTIME_ENV_FILE"
+fi
+chmod 600 "$RUNTIME_ENV_FILE"
+grep -q '^POSTGRES_PASSWORD=' "$RUNTIME_ENV_FILE"
+
+compose() {
+  docker compose --env-file "$RUNTIME_ENV_FILE" "$@"
+}
+
+compose config --quiet
+compose pull
 
 legacy_was_running=0
-previous_image="$(docker inspect --format '{{.Config.Image}}' stonksup-web 2>/dev/null || true)"
+previous_web_image="$(docker inspect --format '{{.Config.Image}}' stonksup-web 2>/dev/null || true)"
 
 port_pid() {
   ss -ltnp | awk -v port=":${PORT}" '
@@ -28,7 +46,7 @@ port_pid() {
 }
 
 stop_legacy() {
-  if [[ -n "$previous_image" ]]; then
+  if [[ -n "$previous_web_image" ]]; then
     return
   fi
 
@@ -75,39 +93,62 @@ restore_legacy() {
   echo "$!" > vite-dev.pid
 }
 
-wait_for_health() {
-  for _ in {1..30}; do
-    if curl -fsS "$HEALTH_URL" >/dev/null; then
-      return 0
+restore_previous_web() {
+  if [[ -z "$previous_web_image" ]]; then
+    restore_legacy
+    return
+  fi
+
+  cat > .rollback-compose.yaml <<EOF
+name: stonksup
+services:
+  web:
+    image: ${previous_web_image}
+    container_name: stonksup-web
+    restart: unless-stopped
+    ports:
+      - "${PORT}:80"
+EOF
+  docker compose -f .rollback-compose.yaml up -d
+  for _ in {1..20}; do
+    if curl -fsS "$WEB_HEALTH_URL" >/dev/null; then
+      echo "Restored previous web image: ${previous_web_image}"
+      return
     fi
     sleep 1
+  done
+  echo "Previous web image could not be restored" >&2
+}
+
+wait_for_stack() {
+  for _ in {1..60}; do
+    if curl -fsS "$WEB_HEALTH_URL" >/dev/null \
+      && curl -fsS "$API_HEALTH_URL" >/dev/null; then
+      return 0
+    fi
+    sleep 2
   done
   return 1
 }
 
 stop_legacy
 
-if ! docker compose up -d --remove-orphans; then
-  restore_legacy
+if ! compose up -d --remove-orphans; then
+  compose down || true
+  restore_previous_web
   exit 1
 fi
 
-if ! wait_for_health; then
-  docker compose ps
-  docker compose logs --tail=120 web
-
-  if [[ -n "$previous_image" ]]; then
-    export STONKSUP_IMAGE="${previous_image%:*}"
-    export IMAGE_TAG="${previous_image##*:}"
-    docker compose up -d --remove-orphans
-    wait_for_health || true
-  else
-    docker compose down
-    restore_legacy
-  fi
+if ! wait_for_stack; then
+  compose ps
+  compose logs --tail=160 web backend database
+  compose down || true
+  restore_previous_web
   exit 1
 fi
 
-docker compose ps
+compose ps
+rm -f .rollback-compose.yaml
 echo "Deployed image tag ${requested_tag}"
-echo "Health check passed: ${HEALTH_URL}"
+echo "Web health check passed: ${WEB_HEALTH_URL}"
+echo "API and database readiness passed: ${API_HEALTH_URL}"

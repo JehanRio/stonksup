@@ -12,3 +12,9 @@ tmp
 .env.*
 !.env.example
 README.md
+
+backend/.venv
+backend/.pytest_cache
+backend/.coverage
+**/__pycache__
+*.py[cod]
