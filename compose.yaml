@@ -19,6 +19,9 @@ services:
       retries: 6
 
   backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     image: ${STONKSUP_BACKEND_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-backend}:${IMAGE_TAG:-latest}
     container_name: stonksup-backend
     restart: unless-stopped
@@ -43,6 +46,9 @@ services:
       retries: 4
 
   web:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${STONKSUP_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-web}:${IMAGE_TAG:-latest}
     container_name: stonksup-web
     restart: unless-stopped
