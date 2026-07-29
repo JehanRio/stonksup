@@ -4,7 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.schemas.market_data import MarketDataProvider, default_start_date
+from app.schemas.market_data import (
+    MarketDataProvider,
+    PriceAdjustment,
+    default_start_date,
+)
 
 
 class StrategyKind(str, Enum):
@@ -65,6 +69,8 @@ class BacktestConfig(BaseModel):
 class BacktestDataConfig(BaseModel):
     mode: Literal["demo", "real"] = "demo"
     provider: MarketDataProvider = "twelvedata"
+    adjustment: PriceAdjustment = "all"
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=16)
     start_date: date = Field(default_factory=default_start_date)
     end_date: date = Field(default_factory=date.today)
     refresh: bool = False
@@ -75,6 +81,7 @@ class BacktestDataConfig(BaseModel):
             raise ValueError("start_date must be on or before end_date")
         if (self.end_date - self.start_date).days > 365 * 20:
             raise ValueError("date range cannot exceed 20 years")
+        self.benchmark_symbol = self.benchmark_symbol.strip().upper()
         return self
 
 
@@ -99,6 +106,11 @@ class EquityPoint(BaseModel):
     drawdown: float
 
 
+class BenchmarkPoint(BaseModel):
+    date: str
+    value: float
+
+
 class BacktestTrade(BaseModel):
     id: str
     entry_date: str
@@ -109,6 +121,15 @@ class BacktestTrade(BaseModel):
     pnl: float
     return_percent: float
     exit_reason: str
+
+
+class DataQualityReport(BaseModel):
+    status: Literal["pass", "warn"]
+    adjustment: PriceAdjustment
+    strategy_bars: int
+    benchmark_bars: int
+    aligned_bars: int
+    checks: list[str]
 
 
 class BacktestResult(BaseModel):
@@ -134,6 +155,29 @@ class BacktestResult(BaseModel):
     trades: list[BacktestTrade]
     assumptions: list[str]
     audit: list[str]
+    benchmark_symbol: str = "SELF"
+    benchmark_source: str = "derived"
+    adjustment: PriceAdjustment = "none"
+    asset_return: float = 0
+    excess_return: float = 0
+    annualized_volatility: float = 0
+    sortino_ratio: float = 0
+    calmar_ratio: float = 0
+    alpha: float = 0
+    beta: float = 0
+    average_holding_days: float = 0
+    total_commission: float = 0
+    benchmark_curve: list[BenchmarkPoint] = Field(default_factory=list)
+    data_quality: DataQualityReport = Field(
+        default_factory=lambda: DataQualityReport(
+            status="warn",
+            adjustment="none",
+            strategy_bars=0,
+            benchmark_bars=0,
+            aligned_bars=0,
+            checks=["Data quality report was not generated."],
+        )
+    )
 
 
 class CompileAndRunResult(BaseModel):
@@ -149,9 +193,12 @@ class BacktestRunSummary(BaseModel):
     strategy_kind: str
     status: str
     data_source: str
+    benchmark_symbol: str = "SELF"
+    adjustment: str = "none"
     bar_count: int
     trade_count: int
     total_return: float
+    excess_return: float = 0
     final_equity: float
     as_of: str
 

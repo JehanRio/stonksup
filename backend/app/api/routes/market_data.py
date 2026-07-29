@@ -11,6 +11,7 @@ from app.schemas.market_data import (
     MarketDataCapability,
     MarketDataSyncRequest,
     MarketDataSyncResult,
+    PriceAdjustment,
     default_start_date,
 )
 from app.services.market_data import get_daily_bar_series, sync_daily_bars
@@ -34,6 +35,7 @@ def get_market_data_capabilities(
             provider="twelvedata",
             configured=configured,
             intervals=["1d"],
+            adjustments=["all", "splits", "dividends", "none"],
             maximum_points_per_request=5_000,
             storage=storage,
             message=(
@@ -63,9 +65,16 @@ def get_market_data_bars(
     request: Request,
     start_date: date = Query(default_factory=default_start_date),
     end_date: date = Query(default_factory=date.today),
+    adjustment: PriceAdjustment = Query(default="all"),
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[MarketBarSeries]:
     return success_response(
         request,
-        get_daily_bar_series(session, symbol, start_date, end_date),
+        get_daily_bar_series(
+            session,
+            symbol,
+            start_date,
+            end_date,
+            adjustment,
+        ),
     )

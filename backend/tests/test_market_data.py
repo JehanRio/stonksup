@@ -25,6 +25,7 @@ def test_market_data_sync_is_idempotent(monkeypatch) -> None:
         instrument_name="Micron Technology",
         exchange="NASDAQ",
         currency="USD",
+        adjustment="all",
         bars=[
             ProviderBar(
                 trading_date=start + timedelta(days=index),
@@ -46,6 +47,7 @@ def test_market_data_sync_is_idempotent(monkeypatch) -> None:
         symbol="mu",
         start_date=start,
         end_date=start + timedelta(days=1),
+        adjustment="all",
     )
 
     with Session(engine) as session:
@@ -58,14 +60,57 @@ def test_market_data_sync_is_idempotent(monkeypatch) -> None:
             "MU",
             start,
             start + timedelta(days=1),
+            "all",
         )
 
     assert first.received_bars == 2
     assert first.stored_bars == 2
+    assert first.adjustment == "all"
+    assert first.data_source.endswith("adjust-all")
     assert second.stored_bars == 0
     assert len(series.bars) == 2
+    assert series.adjustment == "all"
     assert series.bars[-1].close == 101
     engine.dispose()
+
+
+def test_time_series_request_explicitly_uses_full_adjustment(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_request(_self, path, params):
+        captured["path"] = path
+        captured["params"] = params
+        return {
+            "status": "ok",
+            "meta": {
+                "symbol": "MU",
+                "instrument_name": "Micron Technology",
+                "exchange": "NASDAQ",
+                "currency": "USD",
+            },
+            "values": [
+                {
+                    "datetime": "2025-01-02",
+                    "open": "100",
+                    "high": "102",
+                    "low": "99",
+                    "close": "101",
+                    "volume": "1000",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(TwelveDataClient, "_request_json", fake_request)
+    batch = TwelveDataClient("secret").fetch_daily(
+        "MU",
+        date(2025, 1, 1),
+        date(2025, 1, 3),
+        "all",
+    )
+
+    assert captured["path"] == "/time_series"
+    assert captured["params"]["adjust"] == "all"
+    assert batch.adjustment == "all"
 
 
 def test_market_data_capability_reports_missing_key(client) -> None:
@@ -76,3 +121,4 @@ def test_market_data_capability_reports_missing_key(client) -> None:
     assert body["data"]["provider"] == "twelvedata"
     assert body["data"]["configured"] is False
     assert body["data"]["storage"] == "sqlite"
+    assert "all" in body["data"]["adjustments"]

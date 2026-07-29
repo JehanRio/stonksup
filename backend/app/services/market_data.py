@@ -20,11 +20,15 @@ from app.schemas.market_data import (
     MarketBarSeries,
     MarketDataSyncRequest,
     MarketDataSyncResult,
+    PriceAdjustment,
 )
 
 
 TWELVE_DATA_BASE_URL = "https://api.twelvedata.com"
-TWELVE_DATA_SOURCE = "twelvedata:time_series:1day:raw"
+
+
+def twelve_data_source(adjustment: PriceAdjustment) -> str:
+    return f"twelvedata:time_series:1day:adjust-{adjustment}"
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,7 @@ class ProviderBatch:
     instrument_name: str
     exchange: str
     currency: str
+    adjustment: PriceAdjustment
     bars: list[ProviderBar]
 
 
@@ -51,7 +56,13 @@ class TwelveDataClient:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
 
-    def fetch_daily(self, symbol: str, start_date: date, end_date: date) -> ProviderBatch:
+    def fetch_daily(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        adjustment: PriceAdjustment = "all",
+    ) -> ProviderBatch:
         payload = self._request_json(
             "/time_series",
             {
@@ -62,6 +73,7 @@ class TwelveDataClient:
                 "order": "ASC",
                 "outputsize": 5000,
                 "format": "JSON",
+                "adjust": adjustment,
             },
         )
         if payload.get("status") == "error" or "values" not in payload:
@@ -83,9 +95,14 @@ class TwelveDataClient:
             )
         return ProviderBatch(
             symbol=str(meta.get("symbol") or symbol).upper(),
-            instrument_name=str(meta.get("instrument_name") or symbol.upper()),
+            instrument_name=str(
+                meta.get("instrument_name")
+                or meta.get("name")
+                or symbol.upper()
+            ),
             exchange=str(meta.get("exchange") or "UNKNOWN"),
             currency=str(meta.get("currency") or "USD"),
+            adjustment=adjustment,
             bars=bars,
         )
 
@@ -93,7 +110,7 @@ class TwelveDataClient:
         query = urlencode({**params, "apikey": self.api_key})
         request = Request(
             f"{TWELVE_DATA_BASE_URL}{path}?{query}",
-            headers={"Accept": "application/json", "User-Agent": "StonksUp/0.1"},
+            headers={"Accept": "application/json", "User-Agent": "StonksUp/0.2"},
         )
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
@@ -160,10 +177,21 @@ def sync_daily_bars(
     payload: MarketDataSyncRequest,
 ) -> MarketDataSyncResult:
     symbol = payload.symbol.strip().upper()
+    source = twelve_data_source(payload.adjustment)
     client = get_twelve_data_client(settings)
-    batch = client.fetch_daily(symbol, payload.start_date, payload.end_date)
+    batch = client.fetch_daily(
+        symbol,
+        payload.start_date,
+        payload.end_date,
+        payload.adjustment,
+    )
     instrument = session.scalar(
-        select(Instrument).where(Instrument.symbol == batch.symbol).limit(1)
+        select(Instrument)
+        .where(
+            Instrument.symbol == batch.symbol,
+            Instrument.exchange == batch.exchange,
+        )
+        .limit(1)
     )
     if instrument is None:
         instrument = Instrument(
@@ -184,7 +212,7 @@ def sync_daily_bars(
             select(MarketBar).where(
                 MarketBar.instrument_id == instrument.id,
                 MarketBar.timeframe == "1d",
-                MarketBar.source == TWELVE_DATA_SOURCE,
+                MarketBar.source == source,
                 MarketBar.trading_date.between(payload.start_date, payload.end_date),
             )
         )
@@ -197,8 +225,9 @@ def sync_daily_bars(
                 instrument=instrument,
                 timeframe="1d",
                 trading_date=bar.trading_date,
-                source=TWELVE_DATA_SOURCE,
-                adjustment="raw",
+                source=source,
+                adjustment=batch.adjustment,
+                provider_metadata={"adjustment": batch.adjustment},
             )
             session.add(target)
         elif not payload.force:
@@ -207,7 +236,10 @@ def sync_daily_bars(
         target.high = bar.high
         target.low = bar.low
         target.close = bar.close
+        target.adjusted_close = bar.close if batch.adjustment == "all" else None
         target.volume = bar.volume
+        target.adjustment = batch.adjustment
+        target.provider_metadata = {"adjustment": batch.adjustment}
         stored += 1
 
     session.flush()
@@ -215,19 +247,20 @@ def sync_daily_bars(
         select(func.count(MarketBar.id)).where(
             MarketBar.instrument_id == instrument.id,
             MarketBar.timeframe == "1d",
-            MarketBar.source == TWELVE_DATA_SOURCE,
+            MarketBar.source == source,
         )
     )
     return MarketDataSyncResult(
         symbol=batch.symbol,
         provider="twelvedata",
         timeframe="1d",
+        adjustment=batch.adjustment,
         start_date=payload.start_date,
         end_date=payload.end_date,
         received_bars=len(batch.bars),
         stored_bars=stored,
         total_available_bars=int(total or 0),
-        data_source=TWELVE_DATA_SOURCE,
+        data_source=source,
     )
 
 
@@ -236,8 +269,10 @@ def get_daily_bar_models(
     symbol: str,
     start_date: date,
     end_date: date,
+    adjustment: PriceAdjustment = "all",
 ) -> list[MarketBar]:
     normalized = symbol.strip().upper()
+    source = twelve_data_source(adjustment)
     return list(
         session.scalars(
             select(MarketBar)
@@ -245,7 +280,7 @@ def get_daily_bar_models(
             .where(
                 Instrument.symbol == normalized,
                 MarketBar.timeframe == "1d",
-                MarketBar.source == TWELVE_DATA_SOURCE,
+                MarketBar.source == source,
                 MarketBar.trading_date.between(start_date, end_date),
             )
             .order_by(MarketBar.trading_date)
@@ -258,13 +293,21 @@ def get_daily_bar_series(
     symbol: str,
     start_date: date,
     end_date: date,
+    adjustment: PriceAdjustment = "all",
 ) -> MarketBarSeries:
-    rows = get_daily_bar_models(session, symbol, start_date, end_date)
+    rows = get_daily_bar_models(
+        session,
+        symbol,
+        start_date,
+        end_date,
+        adjustment,
+    )
     if not rows:
         raise StonksUpError(
             "market_data_not_found",
             f"No persisted daily market data was found for {symbol.upper()}.",
             status_code=404,
+            details={"adjustment": adjustment},
         )
     return MarketBarSeries(
         symbol=symbol.upper(),
@@ -272,8 +315,8 @@ def get_daily_bar_series(
         timeframe="1d",
         start_date=rows[0].trading_date,
         end_date=rows[-1].trading_date,
-        data_source=TWELVE_DATA_SOURCE,
-        adjustment=rows[0].adjustment,
+        data_source=twelve_data_source(adjustment),
+        adjustment=adjustment,
         bars=[
             MarketBarPoint(
                 date=row.trading_date,

@@ -4,6 +4,8 @@ export type StrategyKind =
   | 'momentum_breakout'
   | 'rsi_mean_reversion';
 
+export type PriceAdjustment = 'all' | 'splits' | 'dividends' | 'none';
+
 export type StrategySpec = {
   name: string;
   symbol: string;
@@ -44,6 +46,8 @@ export type BacktestConfig = {
 export type BacktestDataConfig = {
   mode: 'demo' | 'real';
   provider: 'twelvedata';
+  adjustment: PriceAdjustment;
+  benchmarkSymbol: string;
   startDate: string;
   endDate: string;
   refresh: boolean;
@@ -53,6 +57,7 @@ export type MarketDataCapability = {
   provider: 'twelvedata';
   configured: boolean;
   intervals: string[];
+  adjustments: PriceAdjustment[];
   maximumPointsPerRequest: number;
   storage: 'postgresql' | 'sqlite' | 'unconfigured';
   message: string;
@@ -66,9 +71,12 @@ export type BacktestRunSummary = {
   strategyKind: string;
   status: string;
   dataSource: string;
+  benchmarkSymbol: string;
+  adjustment: string;
   barCount: number;
   tradeCount: number;
   totalReturn: number;
+  excessReturn: number;
   finalEquity: number;
   asOf: string;
 };
@@ -88,8 +96,18 @@ export type BacktestTrade = {
 export type EquityPoint = {
   date: string;
   strategy: number;
+  asset: number;
   benchmark: number;
   drawdown: number;
+};
+
+export type DataQualityReport = {
+  status: 'pass' | 'warn';
+  adjustment: PriceAdjustment;
+  strategyBars: number;
+  benchmarkBars: number;
+  alignedBars: number;
+  checks: string[];
 };
 
 export type BacktestResult = {
@@ -99,22 +117,35 @@ export type BacktestResult = {
   bars: number;
   asOf: string;
   dataSource: string;
+  benchmarkSource: string;
+  benchmarkSymbol: string;
+  adjustment: PriceAdjustment;
   engine: string;
   contractVersion: string;
   initialCapital: number;
   finalEquity: number;
   totalReturn: number;
   annualizedReturn: number;
+  assetReturn: number;
   benchmarkReturn: number;
+  excessReturn: number;
   maxDrawdown: number;
   sharpeRatio: number;
+  sortinoRatio: number;
+  calmarRatio: number;
+  annualizedVolatility: number;
+  alpha: number;
+  beta: number;
   winRate: number;
   profitFactor: number;
+  averageHoldingDays: number;
+  totalCommission: number;
   tradeCount: number;
   equityCurve: EquityPoint[];
   trades: BacktestTrade[];
   assumptions: string[];
   audit: string[];
+  dataQuality: DataQualityReport;
 };
 
 type ApiEnvelope<Data> = {
@@ -161,17 +192,29 @@ type ApiBacktestResult = {
   bars: number;
   as_of: string;
   data_source: string;
+  benchmark_source: string;
+  benchmark_symbol: string;
+  adjustment: PriceAdjustment;
   engine: string;
   contract_version: string;
   initial_capital: number;
   final_equity: number;
   total_return: number;
   annualized_return: number;
+  asset_return: number;
   benchmark_return: number;
+  excess_return: number;
   max_drawdown: number;
   sharpe_ratio: number;
+  sortino_ratio: number;
+  calmar_ratio: number;
+  annualized_volatility: number;
+  alpha: number;
+  beta: number;
   win_rate: number;
   profit_factor: number;
+  average_holding_days: number;
+  total_commission: number;
   trade_count: number;
   equity_curve: Array<{
     date: string;
@@ -179,6 +222,7 @@ type ApiBacktestResult = {
     benchmark: number;
     drawdown: number;
   }>;
+  benchmark_curve: Array<{ date: string; value: number }>;
   trades: Array<{
     id: string;
     entry_date: string;
@@ -192,12 +236,21 @@ type ApiBacktestResult = {
   }>;
   assumptions: string[];
   audit: string[];
+  data_quality: {
+    status: 'pass' | 'warn';
+    adjustment: PriceAdjustment;
+    strategy_bars: number;
+    benchmark_bars: number;
+    aligned_bars: number;
+    checks: string[];
+  };
 };
 
 type ApiMarketDataCapability = {
   provider: 'twelvedata';
   configured: boolean;
   intervals: string[];
+  adjustments: PriceAdjustment[];
   maximum_points_per_request: number;
   storage: 'postgresql' | 'sqlite' | 'unconfigured';
   message: string;
@@ -211,9 +264,12 @@ type ApiBacktestRunSummary = {
   strategy_kind: string;
   status: string;
   data_source: string;
+  benchmark_symbol: string;
+  adjustment: string;
   bar_count: number;
   trade_count: number;
   total_return: number;
+  excess_return: number;
   final_equity: number;
   as_of: string;
 };
@@ -279,6 +335,8 @@ const serializeStrategy = (strategy: StrategySpec): ApiStrategySpec => ({
 const serializeData = (data: BacktestDataConfig) => ({
   mode: data.mode,
   provider: data.provider,
+  adjustment: data.adjustment,
+  benchmark_symbol: data.benchmarkSymbol,
   start_date: data.startDate,
   end_date: data.endDate,
   refresh: data.refresh,
@@ -295,40 +353,71 @@ const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
   compiler: compilation.compiler,
 });
 
-const mapBacktest = (result: ApiBacktestResult): BacktestResult => ({
-  runId: result.run_id,
-  symbol: result.symbol,
-  strategyName: result.strategy_name,
-  bars: result.bars,
-  asOf: result.as_of,
-  dataSource: result.data_source,
-  engine: result.engine,
-  contractVersion: result.contract_version,
-  initialCapital: result.initial_capital,
-  finalEquity: result.final_equity,
-  totalReturn: result.total_return,
-  annualizedReturn: result.annualized_return,
-  benchmarkReturn: result.benchmark_return,
-  maxDrawdown: result.max_drawdown,
-  sharpeRatio: result.sharpe_ratio,
-  winRate: result.win_rate,
-  profitFactor: result.profit_factor,
-  tradeCount: result.trade_count,
-  equityCurve: result.equity_curve,
-  trades: result.trades.map((trade) => ({
-    id: trade.id,
-    entryDate: trade.entry_date,
-    exitDate: trade.exit_date,
-    entryPrice: trade.entry_price,
-    exitPrice: trade.exit_price,
-    quantity: trade.quantity,
-    pnl: trade.pnl,
-    returnPercent: trade.return_percent,
-    exitReason: trade.exit_reason,
-  })),
-  assumptions: result.assumptions,
-  audit: result.audit,
-});
+const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
+  const benchmarkByDate = new Map(
+    result.benchmark_curve.map((point) => [point.date, point.value]),
+  );
+  return {
+    runId: result.run_id,
+    symbol: result.symbol,
+    strategyName: result.strategy_name,
+    bars: result.bars,
+    asOf: result.as_of,
+    dataSource: result.data_source,
+    benchmarkSource: result.benchmark_source,
+    benchmarkSymbol: result.benchmark_symbol,
+    adjustment: result.adjustment,
+    engine: result.engine,
+    contractVersion: result.contract_version,
+    initialCapital: result.initial_capital,
+    finalEquity: result.final_equity,
+    totalReturn: result.total_return,
+    annualizedReturn: result.annualized_return,
+    assetReturn: result.asset_return,
+    benchmarkReturn: result.benchmark_return,
+    excessReturn: result.excess_return,
+    maxDrawdown: result.max_drawdown,
+    sharpeRatio: result.sharpe_ratio,
+    sortinoRatio: result.sortino_ratio,
+    calmarRatio: result.calmar_ratio,
+    annualizedVolatility: result.annualized_volatility,
+    alpha: result.alpha,
+    beta: result.beta,
+    winRate: result.win_rate,
+    profitFactor: result.profit_factor,
+    averageHoldingDays: result.average_holding_days,
+    totalCommission: result.total_commission,
+    tradeCount: result.trade_count,
+    equityCurve: result.equity_curve.map((point) => ({
+      date: point.date,
+      strategy: point.strategy,
+      asset: point.benchmark,
+      benchmark: benchmarkByDate.get(point.date) ?? point.benchmark,
+      drawdown: point.drawdown,
+    })),
+    trades: result.trades.map((trade) => ({
+      id: trade.id,
+      entryDate: trade.entry_date,
+      exitDate: trade.exit_date,
+      entryPrice: trade.entry_price,
+      exitPrice: trade.exit_price,
+      quantity: trade.quantity,
+      pnl: trade.pnl,
+      returnPercent: trade.return_percent,
+      exitReason: trade.exit_reason,
+    })),
+    assumptions: result.assumptions,
+    audit: result.audit,
+    dataQuality: {
+      status: result.data_quality.status,
+      adjustment: result.data_quality.adjustment,
+      strategyBars: result.data_quality.strategy_bars,
+      benchmarkBars: result.data_quality.benchmark_bars,
+      alignedBars: result.data_quality.aligned_bars,
+      checks: result.data_quality.checks,
+    },
+  };
+};
 
 export const compileStrategy = async (
   prompt: string,
@@ -349,6 +438,7 @@ export const getMarketDataCapabilities = async (): Promise<MarketDataCapability>
     provider: result.provider,
     configured: result.configured,
     intervals: result.intervals,
+    adjustments: result.adjustments,
     maximumPointsPerRequest: result.maximum_points_per_request,
     storage: result.storage,
     message: result.message,
@@ -369,9 +459,12 @@ export const getBacktestRunHistory = async (
     strategyKind: run.strategy_kind,
     status: run.status,
     dataSource: run.data_source,
+    benchmarkSymbol: run.benchmark_symbol,
+    adjustment: run.adjustment,
     barCount: run.bar_count,
     tradeCount: run.trade_count,
     totalReturn: run.total_return,
+    excessReturn: run.excess_return,
     finalEquity: run.final_equity,
     asOf: run.as_of,
   }));

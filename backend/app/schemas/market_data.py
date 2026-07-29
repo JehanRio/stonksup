@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 MarketDataProvider = Literal["twelvedata"]
+PriceAdjustment = Literal["all", "splits", "dividends", "none"]
 
 
 def default_start_date() -> date:
@@ -15,6 +16,7 @@ class MarketDataCapability(BaseModel):
     provider: MarketDataProvider
     configured: bool
     intervals: list[str]
+    adjustments: list[PriceAdjustment]
     maximum_points_per_request: int
     storage: Literal["postgresql", "sqlite", "unconfigured"]
     message: str
@@ -25,6 +27,7 @@ class MarketDataSyncRequest(BaseModel):
     start_date: date = Field(default_factory=default_start_date)
     end_date: date = Field(default_factory=date.today)
     provider: MarketDataProvider = "twelvedata"
+    adjustment: PriceAdjustment = "all"
     force: bool = False
 
     @model_validator(mode="after")
@@ -40,6 +43,7 @@ class MarketDataSyncResult(BaseModel):
     symbol: str
     provider: MarketDataProvider
     timeframe: Literal["1d"]
+    adjustment: PriceAdjustment
     start_date: date
     end_date: date
     received_bars: int
@@ -64,5 +68,5 @@ class MarketBarSeries(BaseModel):
     start_date: date
     end_date: date
     data_source: str
-    adjustment: str
+    adjustment: PriceAdjustment
     bars: list[MarketBarPoint]

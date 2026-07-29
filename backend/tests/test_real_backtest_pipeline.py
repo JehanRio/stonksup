@@ -13,25 +13,36 @@ from app.services.market_data import ProviderBar, ProviderBatch, TwelveDataClien
 
 def test_real_market_data_runs_and_persists(monkeypatch, tmp_path: Path) -> None:
     start = date(2025, 1, 1)
-    bars = [
-        ProviderBar(
-            trading_date=start + timedelta(days=index),
-            open=Decimal(str(90 + index / 10)),
-            high=Decimal(str(92 + index / 10)),
-            low=Decimal(str(89 + index / 10)),
-            close=Decimal(str(91 + index / 10)),
-            volume=10_000_000 + index,
+
+    def fake_fetch(
+        _client,
+        symbol,
+        _start_date,
+        _end_date,
+        adjustment="all",
+    ):
+        base = Decimal("90") if symbol == "MU" else Decimal("500")
+        bars = [
+            ProviderBar(
+                trading_date=start + timedelta(days=index),
+                open=base + Decimal(index) / 10,
+                high=base + Decimal("2") + Decimal(index) / 10,
+                low=base - Decimal("1") + Decimal(index) / 10,
+                close=base + Decimal("1") + Decimal(index) / 10,
+                volume=10_000_000 + index,
+            )
+            for index in range(140)
+        ]
+        return ProviderBatch(
+            symbol=symbol,
+            instrument_name=symbol,
+            exchange="NASDAQ" if symbol == "MU" else "NYSE ARCA",
+            currency="USD",
+            adjustment=adjustment,
+            bars=bars,
         )
-        for index in range(140)
-    ]
-    batch = ProviderBatch(
-        symbol="MU",
-        instrument_name="Micron Technology",
-        exchange="NASDAQ",
-        currency="USD",
-        bars=bars,
-    )
-    monkeypatch.setattr(TwelveDataClient, "fetch_daily", lambda *_args: batch)
+
+    monkeypatch.setattr(TwelveDataClient, "fetch_daily", fake_fetch)
 
     database_url = f"sqlite+pysqlite:///{(tmp_path / 'real.db').as_posix()}"
     engine = get_engine(database_url)
@@ -49,6 +60,8 @@ def test_real_market_data_runs_and_persists(monkeypatch, tmp_path: Path) -> None
                 "prompt": "MU buy near EMA5 and sell when close falls below EMA5",
                 "data": {
                     "mode": "real",
+                    "adjustment": "all",
+                    "benchmark_symbol": "SPY",
                     "start_date": start.isoformat(),
                     "end_date": (start + timedelta(days=139)).isoformat(),
                 },
@@ -60,13 +73,20 @@ def test_real_market_data_runs_and_persists(monkeypatch, tmp_path: Path) -> None
                 "/api/v1/market-data/bars/MU"
                 f"?start_date={start.isoformat()}"
                 f"&end_date={(start + timedelta(days=139)).isoformat()}"
+                "&adjustment=all"
             )
         )
 
+    body = response.json()["data"]["backtest"]
     assert response.status_code == 200
-    assert response.json()["data"]["backtest"]["bars"] == 140
-    assert response.json()["data"]["backtest"]["data_source"].startswith("twelvedata:")
-    assert history.json()["data"]["runs"][0]["data_source"].startswith("twelvedata:")
+    assert body["bars"] == 140
+    assert body["data_source"].endswith("adjust-all")
+    assert body["benchmark_symbol"] == "SPY"
+    assert body["adjustment"] == "all"
+    assert body["data_quality"]["status"] == "pass"
+    assert len(body["benchmark_curve"]) == 140
+    assert history.json()["data"]["runs"][0]["benchmark_symbol"] == "SPY"
+    assert history.json()["data"]["runs"][0]["adjustment"] == "all"
     assert len(persisted.json()["data"]["bars"]) == 140
 
     engine.dispose()

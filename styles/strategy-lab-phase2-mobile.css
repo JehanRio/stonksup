@@ -1,0 +1,20 @@
+@media (max-width: 760px) {
+  .strategy-metric-grid.phase2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-metric-grid.phase2 article,
+  .strategy-metric-grid.phase2 article:nth-child(3),
+  .strategy-metric-grid.phase2 article:nth-child(3n) {
+    border-right: 1px solid var(--su-line);
+    border-bottom: 1px solid var(--su-line);
+  }
+
+  .strategy-metric-grid.phase2 article:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .strategy-metric-grid.phase2 article:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+}

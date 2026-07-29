@@ -1,32 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Activity,
-  Braces,
-  CalendarDays,
-  CheckCircle2,
   ChevronRight,
   CircleAlert,
   Database,
-  FlaskConical,
-  Gauge,
-  History,
   Play,
   RefreshCw,
-  ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Target,
   TrendingUp,
 } from 'lucide-react';
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+
 import {
   compileAndRunStrategy,
   compileStrategy,
@@ -42,9 +26,12 @@ import {
   type StrategyKind,
   type StrategySpec,
 } from '../../services/backtestApi';
+import StrategyDataConsole from './components/StrategyDataConsole';
+import StrategyResultPanel from './components/StrategyResultPanel';
 import '../../styles/strategy-lab.css';
 import '../../styles/strategy-lab-api.css';
 import '../../styles/strategy-lab-data.css';
+
 
 const INITIAL_PROMPT =
   'MU 日线跌到 EMA5 时买入，收盘跌破 EMA5 时卖出。单次使用 95% 资金，亏损 8% 止损。';
@@ -63,6 +50,8 @@ const DEFAULT_CONFIG: BacktestConfig = {
 const DEFAULT_DATA: BacktestDataConfig = {
   mode: 'demo',
   provider: 'twelvedata',
+  adjustment: 'all',
+  benchmarkSymbol: 'SPY',
   startDate: isoDate(fiveYearsAgo),
   endDate: isoDate(today),
   refresh: false,
@@ -125,42 +114,6 @@ const templates: Array<{
   },
 ];
 
-const formatCurrency = (value: number, compact = false) =>
-  new Intl.NumberFormat('en-US', {
-    notation: compact ? 'compact' : 'standard',
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: compact ? 1 : 0,
-  }).format(value);
-
-const formatPercent = (value: number) =>
-  `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
-
-const formatMetric = (value: number) =>
-  Number.isFinite(value) ? value.toFixed(2) : '--';
-
-const resultMetrics = (result: BacktestResult) => [
-  { label: '累计收益', value: formatPercent(result.totalReturn), tone: result.totalReturn >= 0 ? 'positive' : 'negative' },
-  { label: '年化收益', value: formatPercent(result.annualizedReturn), tone: result.annualizedReturn >= 0 ? 'positive' : 'negative' },
-  { label: '最大回撤', value: formatPercent(result.maxDrawdown), tone: 'negative' },
-  { label: '夏普比率', value: formatMetric(result.sharpeRatio), tone: result.sharpeRatio >= 1 ? 'positive' : 'neutral' },
-  { label: '胜率', value: formatPercent(result.winRate), tone: 'neutral' },
-  { label: '交易次数', value: String(result.tradeCount), tone: 'neutral' },
-];
-
-const EquityTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="strategy-chart-tooltip">
-      <span>{label}</span>
-      {payload.map((item: any) => (
-        <strong key={item.dataKey} style={{ color: item.color }}>
-          {item.name}: {formatCurrency(Number(item.value))}
-        </strong>
-      ))}
-    </div>
-  );
-};
 
 const NumericField: React.FC<{
   label: string;
@@ -187,7 +140,9 @@ const NumericField: React.FC<{
   </label>
 );
 
+
 type RunStatus = 'loading' | 'ready' | 'running' | 'complete' | 'error';
+
 
 const StrategyLabPage: React.FC = () => {
   const [prompt, setPrompt] = useState(INITIAL_PROMPT);
@@ -245,9 +200,7 @@ const StrategyLabPage: React.FC = () => {
     };
   }, []);
 
-  const metrics = useMemo(() => (result ? resultMetrics(result) : []), [result]);
   const busy = status === 'loading' || status === 'running';
-  const realReady = Boolean(capability?.configured);
 
   const updateDefinition = <Key extends keyof StrategySpec>(
     key: Key,
@@ -320,26 +273,18 @@ const StrategyLabPage: React.FC = () => {
     }
   };
 
-  const statusLabel = {
-    loading: 'CONNECTING ENGINE',
-    ready: 'READY TO RUN',
-    running: 'RUNNING',
-    complete: 'RUN COMPLETE',
-    error: 'RUN FAILED',
-  }[status];
-
   return (
     <div className="strategy-lab-page">
       <header className="strategy-lab-header">
         <div>
-          <span className="strategy-eyebrow">STRATEGY / NATURAL LANGUAGE BACKTEST</span>
+          <span className="strategy-eyebrow">STRATEGY / RELATIVE BACKTEST</span>
           <h1>策略实验室</h1>
-          <p>口述交易规则，审阅结构化契约，使用可追溯行情完成确定性回测。</p>
+          <p>使用复权行情、独立基准和可审计指标，判断策略是否真正创造超额收益。</p>
         </div>
         <div className="strategy-header-actions">
           <span className={`strategy-data-badge ${dataConfig.mode === 'real' ? 'is-real' : ''}`}>
             <Database size={17} />
-            {dataConfig.mode === 'real' ? 'REAL DATA' : 'DEMO DATA'}
+            {dataConfig.mode === 'real' ? 'ADJUSTED DATA' : 'DEMO DATA'}
           </span>
           <button
             type="button"
@@ -353,89 +298,19 @@ const StrategyLabPage: React.FC = () => {
         </div>
       </header>
 
-      <section className="strategy-data-console" aria-label="回测数据设置">
-        <div className="strategy-data-title">
-          <span><Database size={17} /> DATASET</span>
-          <strong>{dataConfig.mode === 'real' ? '真实日线行情' : '确定性演示行情'}</strong>
-          <small className={realReady ? 'is-ready' : 'is-missing'}>
-            {realReady ? 'Twelve Data 已连接' : '真实数据密钥未配置'}
-          </small>
-        </div>
-        <div className="strategy-mode-switch" aria-label="数据模式">
-          <button
-            type="button"
-            className={dataConfig.mode === 'demo' ? 'is-active' : ''}
-            onClick={() => updateData('mode', 'demo')}
-          >
-            演示
-          </button>
-          <button
-            type="button"
-            className={dataConfig.mode === 'real' ? 'is-active' : ''}
-            onClick={() => updateData('mode', 'real')}
-            disabled={!realReady}
-            title={realReady ? '使用真实行情' : '服务器需要配置 Twelve Data API Key'}
-          >
-            真实
-          </button>
-        </div>
-        <label className="strategy-date-field">
-          <span><CalendarDays size={14} /> 起始日期</span>
-          <input
-            type="date"
-            value={dataConfig.startDate}
-            disabled={dataConfig.mode === 'demo'}
-            onChange={(event) => updateData('startDate', event.target.value)}
-          />
-        </label>
-        <label className="strategy-date-field">
-          <span><CalendarDays size={14} /> 结束日期</span>
-          <input
-            type="date"
-            value={dataConfig.endDate}
-            disabled={dataConfig.mode === 'demo'}
-            onChange={(event) => updateData('endDate', event.target.value)}
-          />
-        </label>
-        <label className="strategy-refresh-toggle">
-          <input
-            type="checkbox"
-            checked={dataConfig.refresh}
-            disabled={dataConfig.mode === 'demo'}
-            onChange={(event) => updateData('refresh', event.target.checked)}
-          />
-          <span>运行前刷新</span>
-        </label>
-      </section>
-
-      {history.length > 0 && (
-        <section className="strategy-history-strip" aria-label="最近回测">
-          <div className="strategy-history-label">
-            <History size={17} />
-            <span>RECENT RUNS</span>
-          </div>
-          <div className="strategy-history-list">
-            {history.slice(0, 4).map((run) => (
-              <article key={run.runId}>
-                <div>
-                  <strong>{run.symbol}</strong>
-                  <span>{run.asOf}</span>
-                </div>
-                <b className={run.totalReturn >= 0 ? 'positive' : 'negative'}>
-                  {formatPercent(run.totalReturn)}
-                </b>
-                <small>{run.barCount} bars / {run.tradeCount} trades</small>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
+      <StrategyDataConsole
+        assetSymbol={definition.symbol}
+        config={dataConfig}
+        capability={capability}
+        history={history}
+        onChange={updateData}
+      />
 
       {errorMessage && (
         <div className="strategy-error-banner" role="alert">
           <CircleAlert size={18} />
           <span>{errorMessage}</span>
-          <small>{dataConfig.mode === 'real' ? '检查数据源配置与日期范围' : '检查后端服务状态'}</small>
+          <small>{dataConfig.mode === 'real' ? '检查数据源、基准和日期范围' : '检查后端服务状态'}</small>
         </div>
       )}
 
@@ -512,7 +387,7 @@ const StrategyLabPage: React.FC = () => {
               <span>03</span>
               <div>
                 <h2>确认规则与成本</h2>
-                <p>这里的参数会完整保存到运行记录。</p>
+                <p>参数、成本和数据口径都会进入运行快照。</p>
               </div>
             </div>
             <div className="strategy-fields">
@@ -556,145 +431,16 @@ const StrategyLabPage: React.FC = () => {
           </section>
         </aside>
 
-        <main className="strategy-results">
-          <div className="strategy-run-strip">
-            <span className={`strategy-run-status is-${status}`}>
-              {status === 'complete' ? <CheckCircle2 size={16} /> : <RefreshCw size={16} />}
-              {statusLabel}
-            </span>
-            <span>{result?.runId ?? 'WAITING FOR RUN'}</span>
-            <span>{result ? `${result.bars} daily bars` : definition.kind}</span>
-            <span>{result ? `as of ${result.asOf}` : 'next-open execution'}</span>
-          </div>
-
-          {!result ? (
-            <div className="strategy-empty-result">
-              <FlaskConical size={28} />
-              <strong>正在连接确定性回测引擎</strong>
-              <span>运行后将在这里显示净值曲线、指标、审计和交易明细。</span>
-            </div>
-          ) : (
-            <>
-              <section className="strategy-result-hero">
-                <div>
-                  <span className="strategy-eyebrow">BACKTEST OUTPUT</span>
-                  <h2>{definition.name}</h2>
-                  <p>{result.engine} / {result.dataSource}</p>
-                </div>
-                <div className="strategy-equity-value">
-                  <span>期末权益</span>
-                  <strong>{formatCurrency(result.finalEquity)}</strong>
-                  <small className={result.totalReturn >= 0 ? 'positive' : 'negative'}>
-                    {formatPercent(result.totalReturn)}
-                  </small>
-                </div>
-              </section>
-
-              <div className="strategy-metric-grid">
-                {metrics.map((metric) => (
-                  <article key={metric.label}>
-                    <span>{metric.label}</span>
-                    <strong className={metric.tone}>{metric.value}</strong>
-                  </article>
-                ))}
-              </div>
-
-              <section className="strategy-chart-section">
-                <div className="strategy-result-heading">
-                  <div>
-                    <span>04 / EQUITY CURVE</span>
-                    <h3>策略与买入持有</h3>
-                  </div>
-                  <div className="strategy-chart-legend">
-                    <span><i className="strategy-line" />Strategy</span>
-                    <span><i className="benchmark-line" />Benchmark</span>
-                  </div>
-                </div>
-                <div className="strategy-chart">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={result.equityCurve} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-                      <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.07)" strokeDasharray="3 4" />
-                      <XAxis dataKey="date" tickLine={false} axisLine={false} minTickGap={42} tick={{ fill: '#76818a', fontSize: 12 }} />
-                      <YAxis tickLine={false} axisLine={false} width={70} domain={['auto', 'auto']} tickFormatter={(value) => formatCurrency(Number(value), true)} tick={{ fill: '#76818a', fontSize: 12 }} />
-                      <Tooltip content={<EquityTooltip />} />
-                      <Line type="monotone" dataKey="strategy" name="Strategy" stroke="#4d8dff" strokeWidth={2.4} dot={false} isAnimationActive={false} />
-                      <Line type="monotone" dataKey="benchmark" name="Benchmark" stroke="#69737c" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
-
-              <div className="strategy-audit-grid">
-                <section className="strategy-audit-section">
-                  <div className="strategy-result-heading">
-                    <div><span>05 / COMPILED CONTRACT</span><h3>AI 规则解释</h3></div>
-                    <Braces size={20} />
-                  </div>
-                  <ol className="strategy-rule-list">
-                    {(compilation?.interpretation ?? []).map((rule, index) => (
-                      <li key={`${index}-${rule}`}><span>{String(index + 1).padStart(2, '0')}</span><p>{rule}</p></li>
-                    ))}
-                  </ol>
-                  <div className="strategy-contract-version">
-                    <ShieldCheck size={17} />
-                    {compilation?.contractVersion ?? result.contractVersion}
-                  </div>
-                </section>
-
-                <section className="strategy-audit-section">
-                  <div className="strategy-result-heading">
-                    <div><span>06 / ASSUMPTIONS</span><h3>运行边界</h3></div>
-                    <SlidersHorizontal size={20} />
-                  </div>
-                  <ul className="strategy-assumption-list">
-                    {[...(compilation?.assumptions ?? []), ...(compilation?.warnings ?? []), ...result.assumptions].map((assumption, index) => (
-                      <li key={`${index}-${assumption}`}><CircleAlert size={16} /><span>{assumption}</span></li>
-                    ))}
-                  </ul>
-                </section>
-              </div>
-
-              <section className="strategy-trades-section">
-                <div className="strategy-result-heading">
-                  <div><span>07 / TRADE LEDGER</span><h3>模拟交易明细</h3></div>
-                  <span className="strategy-profit-factor">Profit factor <strong>{formatMetric(result.profitFactor)}</strong></span>
-                </div>
-                <div className="strategy-trade-table">
-                  <div className="strategy-trade-row strategy-trade-head">
-                    <span>ID</span><span>Entry</span><span>Exit</span><span>Qty</span><span>P&amp;L</span><span>Return</span><span>Reason</span>
-                  </div>
-                  {result.trades.length > 0 ? result.trades.slice().reverse().slice(0, 8).map((trade) => (
-                    <div className="strategy-trade-row" key={trade.id}>
-                      <span>{trade.id}</span><span>{trade.entryDate}</span><span>{trade.exitDate}</span><span>{trade.quantity}</span>
-                      <span className={trade.pnl >= 0 ? 'positive' : 'negative'}>{formatCurrency(trade.pnl)}</span>
-                      <span className={trade.returnPercent >= 0 ? 'positive' : 'negative'}>{formatPercent(trade.returnPercent)}</span>
-                      <span>{trade.exitReason}</span>
-                    </div>
-                  )) : (
-                    <div className="strategy-no-trades"><Gauge size={22} />当前参数未产生交易，调整规则后重新运行。</div>
-                  )}
-                </div>
-              </section>
-
-              <section className="strategy-engine-audit">
-                <div><span>08 / ENGINE AUDIT</span><h3>可复现性检查</h3></div>
-                <ul>
-                  {result.audit.map((item, index) => (
-                    <li key={`${index}-${item}`} className={item.startsWith('PASS') ? 'is-pass' : ''}>{item}</li>
-                  ))}
-                </ul>
-              </section>
-
-              <footer className="strategy-next-step">
-                <FlaskConical size={20} />
-                <span>策略、数据口径、运行指标和逐笔交易已保存到服务端，可用于复盘与后续样本外验证。</span>
-              </footer>
-            </>
-          )}
-        </main>
+        <StrategyResultPanel
+          status={status}
+          result={result}
+          definition={definition}
+          compilation={compilation}
+        />
       </div>
     </div>
   );
 };
+
 
 export default StrategyLabPage;

@@ -17,6 +17,7 @@ from app.schemas.backtests import (
     StrategyCompilation,
 )
 from app.schemas.common import ApiResponse
+from app.services.backtest_analysis import enrich_backtest_result
 from app.services.backtest_data import apply_data_provenance, load_backtest_data
 from app.services.backtest_engine import run_backtest
 from app.services.backtest_persistence import (
@@ -46,6 +47,27 @@ def list_backtest_runs(
     return success_response(request, get_backtest_run_history(session, limit))
 
 
+def _execute_backtest(
+    *,
+    session: Session,
+    settings: Settings,
+    strategy,
+    config,
+    data,
+    bars: int,
+) -> BacktestResult:
+    loaded = load_backtest_data(
+        session,
+        settings,
+        strategy,
+        data,
+        bars,
+    )
+    result = run_backtest(loaded.rows, strategy, config)
+    result = enrich_backtest_result(result, loaded, config)
+    return apply_data_provenance(result, loaded)
+
+
 @router.post("/run", response_model=ApiResponse[BacktestResult])
 def run_compiled_strategy(
     payload: RunBacktestRequest,
@@ -53,16 +75,13 @@ def run_compiled_strategy(
     settings: Settings = Depends(get_app_settings),
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[BacktestResult]:
-    loaded = load_backtest_data(
-        session,
-        settings,
-        payload.strategy,
-        payload.data,
-        payload.bars,
-    )
-    result = apply_data_provenance(
-        run_backtest(loaded.rows, payload.strategy, payload.config),
-        loaded,
+    result = _execute_backtest(
+        session=session,
+        settings=settings,
+        strategy=payload.strategy,
+        config=payload.config,
+        data=payload.data,
+        bars=payload.bars,
     )
     persist_backtest(
         session,
@@ -83,16 +102,13 @@ def compile_and_run_strategy(
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[CompileAndRunResult]:
     compilation = compile_strategy(CompileStrategyRequest(prompt=payload.prompt))
-    loaded = load_backtest_data(
-        session,
-        settings,
-        compilation.strategy,
-        payload.data,
-        payload.bars,
-    )
-    result = apply_data_provenance(
-        run_backtest(loaded.rows, compilation.strategy, payload.config),
-        loaded,
+    result = _execute_backtest(
+        session=session,
+        settings=settings,
+        strategy=compilation.strategy,
+        config=payload.config,
+        data=payload.data,
+        bars=payload.bars,
     )
     persist_backtest(
         session,
