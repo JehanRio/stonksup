@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Braces,
@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Target,
   TrendingUp,
 } from 'lucide-react';
 import {
@@ -25,23 +26,45 @@ import {
   YAxis,
 } from 'recharts';
 import {
-  compileStrategyPrompt,
-  createSeededDailyHistory,
-  runBacktest,
+  compileAndRunStrategy,
+  compileStrategy,
+  runStrategy,
   type BacktestConfig,
   type BacktestResult,
-  type StrategyDefinition,
+  type StrategyCompilation,
   type StrategyKind,
-} from '../../services/backtestEngine';
+  type StrategySpec,
+} from '../../services/backtestApi';
 import '../../styles/strategy-lab.css';
+import '../../styles/strategy-lab-api.css';
 
 const INITIAL_PROMPT =
-  'MU 的 20 日均线上穿 60 日均线时买入，下穿时卖出。单次使用 95% 资金，亏损 8% 止损。';
+  'MU 日线跌到 EMA5 时买入，收盘跌破 EMA5 时卖出。单次使用 95% 资金，亏损 8% 止损。';
 
 const DEFAULT_CONFIG: BacktestConfig = {
   initialCapital: 100_000,
   commissionBps: 5,
   slippageBps: 5,
+};
+
+const DEFAULT_STRATEGY: StrategySpec = {
+  name: 'MU EMA5 回踩',
+  symbol: 'MU',
+  kind: 'ema_pullback',
+  timeframe: '1d',
+  emaPeriod: 5,
+  fastPeriod: 20,
+  slowPeriod: 60,
+  lookbackPeriod: 20,
+  rsiPeriod: 14,
+  rsiEntry: 30,
+  rsiExit: 55,
+  touchToleranceBps: 10,
+  stopLossPercent: 8,
+  allocationPercent: 95,
+  signalAt: 'close',
+  fillAt: 'next_open',
+  longOnly: true,
 };
 
 const templates: Array<{
@@ -52,10 +75,17 @@ const templates: Array<{
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
 }> = [
   {
+    kind: 'ema_pullback',
+    label: 'EMA 回踩',
+    caption: '触线企稳',
+    prompt: INITIAL_PROMPT,
+    icon: Target,
+  },
+  {
     kind: 'ma_crossover',
     label: '均线交叉',
     caption: '趋势跟随',
-    prompt: INITIAL_PROMPT,
+    prompt: 'MU 的 20 日均线上穿 60 日均线时买入，下穿时卖出。单次使用 95% 资金。',
     icon: TrendingUp,
   },
   {
@@ -73,10 +103,6 @@ const templates: Array<{
     icon: RefreshCw,
   },
 ];
-
-const initialCompilation = compileStrategyPrompt(INITIAL_PROMPT, 'ma_crossover');
-const initialHistory = createSeededDailyHistory(initialCompilation.definition.symbol);
-const initialResult = runBacktest(initialHistory, initialCompilation.definition, DEFAULT_CONFIG);
 
 const formatCurrency = (value: number, compact = false) => {
   if (compact) {
@@ -148,77 +174,145 @@ const NumericField: React.FC<{
   </label>
 );
 
+type RunStatus = 'loading' | 'ready' | 'running' | 'complete' | 'error';
+
 const StrategyLabPage: React.FC = () => {
   const [prompt, setPrompt] = useState(INITIAL_PROMPT);
-  const [compilation, setCompilation] = useState(initialCompilation);
-  const [definition, setDefinition] = useState<StrategyDefinition>(initialCompilation.definition);
+  const [compilation, setCompilation] = useState<StrategyCompilation | null>(null);
+  const [definition, setDefinition] = useState<StrategySpec>(DEFAULT_STRATEGY);
   const [config, setConfig] = useState<BacktestConfig>(DEFAULT_CONFIG);
-  const [result, setResult] = useState<BacktestResult>(initialResult);
-  const [status, setStatus] = useState<'compiled' | 'running' | 'complete'>('complete');
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [status, setStatus] = useState<RunStatus>('loading');
+  const [promptDirty, setPromptDirty] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const metrics = useMemo(() => resultMetrics(result), [result]);
+  useEffect(() => {
+    let active = true;
+    const initialize = async () => {
+      try {
+        const response = await compileAndRunStrategy(INITIAL_PROMPT, DEFAULT_CONFIG);
+        if (!active) return;
+        setCompilation(response.compilation);
+        setDefinition(response.compilation.strategy);
+        setResult(response.backtest);
+        setStatus('complete');
+      } catch (error) {
+        if (!active) return;
+        setStatus('error');
+        setErrorMessage(error instanceof Error ? error.message : '无法连接回测服务');
+      }
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const updateDefinition = <Key extends keyof StrategyDefinition>(
+  const metrics = useMemo(() => (result ? resultMetrics(result) : []), [result]);
+  const busy = status === 'loading' || status === 'running';
+
+  const updateDefinition = <Key extends keyof StrategySpec>(
     key: Key,
-    value: StrategyDefinition[Key],
+    value: StrategySpec[Key],
   ) => {
     setDefinition((current) => ({ ...current, [key]: value }));
-    setStatus('compiled');
+    setPromptDirty(false);
+    setStatus('ready');
   };
 
-  const applyTemplate = (kind: StrategyKind) => {
+  const applyTemplate = async (kind: StrategyKind) => {
     const template = templates.find((item) => item.kind === kind);
     if (!template) return;
-    const nextCompilation = compileStrategyPrompt(template.prompt, kind);
     setPrompt(template.prompt);
-    setCompilation(nextCompilation);
-    setDefinition(nextCompilation.definition);
-    setStatus('compiled');
-  };
-
-  const handleCompile = () => {
-    const nextCompilation = compileStrategyPrompt(prompt);
-    setCompilation(nextCompilation);
-    setDefinition(nextCompilation.definition);
-    setStatus('compiled');
-  };
-
-  const handleRun = () => {
     setStatus('running');
-    const history = createSeededDailyHistory(definition.symbol);
-    const nextResult = runBacktest(history, definition, config);
-    setResult(nextResult);
-    setStatus('complete');
-    window.localStorage.setItem(
-      'stonksup_strategy_draft',
-      JSON.stringify({
-        definition,
-        config,
-        runId: nextResult.runId,
-        updatedAt: new Date().toISOString(),
-      }),
-    );
+    setErrorMessage('');
+    try {
+      const nextCompilation = await compileStrategy(template.prompt, kind);
+      setCompilation(nextCompilation);
+      setDefinition(nextCompilation.strategy);
+      setPromptDirty(false);
+      setStatus('ready');
+    } catch (error) {
+      setStatus('error');
+      setErrorMessage(error instanceof Error ? error.message : '策略编译失败');
+    }
   };
+
+  const handleCompile = async () => {
+    setStatus('running');
+    setErrorMessage('');
+    try {
+      const nextCompilation = await compileStrategy(prompt);
+      setCompilation(nextCompilation);
+      setDefinition(nextCompilation.strategy);
+      setPromptDirty(false);
+      setStatus('ready');
+    } catch (error) {
+      setStatus('error');
+      setErrorMessage(error instanceof Error ? error.message : '策略编译失败');
+    }
+  };
+
+  const handleRun = async () => {
+    setStatus('running');
+    setErrorMessage('');
+    try {
+      if (promptDirty || !compilation) {
+        const response = await compileAndRunStrategy(prompt, config);
+        setCompilation(response.compilation);
+        setDefinition(response.compilation.strategy);
+        setResult(response.backtest);
+        setPromptDirty(false);
+      } else {
+        setResult(await runStrategy(definition, config));
+      }
+      setStatus('complete');
+    } catch (error) {
+      setStatus('error');
+      setErrorMessage(error instanceof Error ? error.message : '回测运行失败');
+    }
+  };
+
+  const statusLabel = {
+    loading: 'CONNECTING ENGINE',
+    ready: 'READY TO RUN',
+    running: 'RUNNING',
+    complete: 'RUN COMPLETE',
+    error: 'RUN FAILED',
+  }[status];
 
   return (
     <div className="strategy-lab-page">
       <header className="strategy-lab-header">
         <div>
-          <span className="strategy-eyebrow">STRATEGY / DETERMINISTIC BACKTEST</span>
+          <span className="strategy-eyebrow">STRATEGY / NATURAL LANGUAGE BACKTEST</span>
           <h1>策略实验室</h1>
-          <p>把口述交易方法编译成可检查的规则，再交给确定性引擎生成可复现结果。</p>
+          <p>用自然语言描述交易规则，先编译成可检查的策略契约，再交给服务端确定性引擎回测。</p>
         </div>
         <div className="strategy-header-actions">
           <span className="strategy-data-badge">
             <Database size={17} />
-            DEMO DATA
+            SERVER DEMO
           </span>
-          <button type="button" className="strategy-run-button" onClick={handleRun}>
-            <Play size={18} fill="currentColor" />
-            运行回测
+          <button
+            type="button"
+            className="strategy-run-button"
+            onClick={handleRun}
+            disabled={busy}
+          >
+            {busy ? <RefreshCw size={18} /> : <Play size={18} fill="currentColor" />}
+            {busy ? '正在处理' : '运行回测'}
           </button>
         </div>
       </header>
+
+      {errorMessage && (
+        <div className="strategy-error-banner" role="alert">
+          <CircleAlert size={18} />
+          <span>{errorMessage}</span>
+          <small>请确认 FastAPI 已在 8000 端口启动。</small>
+        </div>
+      )}
 
       <div className="strategy-workbench">
         <aside className="strategy-builder">
@@ -227,7 +321,7 @@ const StrategyLabPage: React.FC = () => {
               <span>01</span>
               <div>
                 <h2>选择策略骨架</h2>
-                <p>先确定计算范式，再描述个性化规则。</p>
+                <p>模板只提供起点，输入框中的自然语言才是本次编译依据。</p>
               </div>
             </div>
             <div className="strategy-template-switcher">
@@ -239,7 +333,8 @@ const StrategyLabPage: React.FC = () => {
                     key={template.kind}
                     type="button"
                     className={active ? 'is-active' : ''}
-                    onClick={() => applyTemplate(template.kind)}
+                    onClick={() => void applyTemplate(template.kind)}
+                    disabled={busy}
                   >
                     <Icon size={20} strokeWidth={1.8} />
                     <span>
@@ -257,7 +352,7 @@ const StrategyLabPage: React.FC = () => {
               <span>02</span>
               <div>
                 <h2>口述你的做法</h2>
-                <p>描述标的、入场、出场、仓位与止损。</p>
+                <p>可以直接说“跌到 EMA5 买入，收盘跌破卖出”。</p>
               </div>
             </div>
             <textarea
@@ -265,15 +360,27 @@ const StrategyLabPage: React.FC = () => {
               value={prompt}
               onChange={(event) => {
                 setPrompt(event.target.value);
-                setStatus('compiled');
+                setPromptDirty(true);
+                setStatus('ready');
               }}
               aria-label="口述策略"
             />
-            <button type="button" className="strategy-compile-button" onClick={handleCompile}>
+            <button
+              type="button"
+              className="strategy-compile-button"
+              onClick={() => void handleCompile()}
+              disabled={busy || prompt.trim().length < 4}
+            >
               <Sparkles size={18} />
               编译为结构化规则
               <ChevronRight size={18} />
             </button>
+            {compilation && (
+              <div className="strategy-compiler-meta">
+                <span>{compilation.compiler}</span>
+                <strong>{Math.round(compilation.confidence * 100)}% 解析置信度</strong>
+              </div>
+            )}
           </section>
 
           <section className="strategy-builder-section">
@@ -281,7 +388,7 @@ const StrategyLabPage: React.FC = () => {
               <span>03</span>
               <div>
                 <h2>确认规则与假设</h2>
-                <p>所有输入都会进入本次运行快照。</p>
+                <p>修改这里的值会直接进入下一次服务器运行快照。</p>
               </div>
             </div>
 
@@ -293,6 +400,27 @@ const StrategyLabPage: React.FC = () => {
                   onChange={(event) => updateDefinition('symbol', event.target.value.toUpperCase())}
                 />
               </label>
+
+              {definition.kind === 'ema_pullback' && (
+                <>
+                  <NumericField
+                    label="EMA 周期"
+                    value={definition.emaPeriod}
+                    suffix="日"
+                    min={2}
+                    max={250}
+                    onChange={(value) => updateDefinition('emaPeriod', value)}
+                  />
+                  <NumericField
+                    label="触线容差"
+                    value={definition.touchToleranceBps}
+                    suffix="bps"
+                    min={0}
+                    max={200}
+                    onChange={(value) => updateDefinition('touchToleranceBps', value)}
+                  />
+                </>
+              )}
 
               {definition.kind === 'ma_crossover' && (
                 <>
@@ -339,15 +467,15 @@ const StrategyLabPage: React.FC = () => {
                   <NumericField
                     label="入场阈值"
                     value={definition.rsiEntry}
-                    min={5}
-                    max={45}
+                    min={1}
+                    max={49}
                     onChange={(value) => updateDefinition('rsiEntry', value)}
                   />
                   <NumericField
                     label="出场阈值"
                     value={definition.rsiExit}
-                    min={45}
-                    max={90}
+                    min={50}
+                    max={99}
                     onChange={(value) => updateDefinition('rsiExit', value)}
                   />
                 </>
@@ -357,8 +485,8 @@ const StrategyLabPage: React.FC = () => {
                 label="保护止损"
                 value={definition.stopLossPercent}
                 suffix="%"
-                min={1}
-                max={30}
+                min={0}
+                max={50}
                 step={0.5}
                 onChange={(value) => updateDefinition('stopLossPercent', value)}
               />
@@ -366,7 +494,7 @@ const StrategyLabPage: React.FC = () => {
                 label="资金使用"
                 value={definition.allocationPercent}
                 suffix="%"
-                min={5}
+                min={1}
                 max={100}
                 onChange={(value) => updateDefinition('allocationPercent', value)}
               />
@@ -378,7 +506,7 @@ const StrategyLabPage: React.FC = () => {
                 step={1_000}
                 onChange={(value) => {
                   setConfig((current) => ({ ...current, initialCapital: value }));
-                  setStatus('compiled');
+                  setStatus('ready');
                 }}
               />
               <NumericField
@@ -386,10 +514,10 @@ const StrategyLabPage: React.FC = () => {
                 value={config.commissionBps}
                 suffix="bps"
                 min={0}
-                max={100}
+                max={1_000}
                 onChange={(value) => {
                   setConfig((current) => ({ ...current, commissionBps: value }));
-                  setStatus('compiled');
+                  setStatus('ready');
                 }}
               />
               <NumericField
@@ -397,10 +525,10 @@ const StrategyLabPage: React.FC = () => {
                 value={config.slippageBps}
                 suffix="bps"
                 min={0}
-                max={100}
+                max={1_000}
                 onChange={(value) => {
                   setConfig((current) => ({ ...current, slippageBps: value }));
-                  setStatus('compiled');
+                  setStatus('ready');
                 }}
               />
             </div>
@@ -410,184 +538,212 @@ const StrategyLabPage: React.FC = () => {
         <main className="strategy-results">
           <div className="strategy-run-strip">
             <span className={`strategy-run-status is-${status}`}>
-              {status === 'running' ? <RefreshCw size={16} /> : <CheckCircle2 size={16} />}
-              {status === 'complete' ? 'RUN COMPLETE' : status === 'running' ? 'RUNNING' : 'CHANGES NOT RUN'}
+              {status === 'complete' ? <CheckCircle2 size={16} /> : <RefreshCw size={16} />}
+              {statusLabel}
             </span>
-            <span>{result.runId}</span>
-            <span>{result.bars} daily bars</span>
-            <span>as of {result.asOf}</span>
+            <span>{result?.runId ?? 'WAITING FOR RUN'}</span>
+            <span>{result ? `${result.bars} daily bars` : definition.kind}</span>
+            <span>{result ? `as of ${result.asOf}` : 'next-open execution'}</span>
           </div>
 
-          <section className="strategy-result-hero">
-            <div>
-              <span className="strategy-eyebrow">BACKTEST OUTPUT</span>
-              <h2>{definition.name}</h2>
-              <p>{result.dataSource}</p>
+          {!result ? (
+            <div className="strategy-empty-result">
+              <FlaskConical size={28} />
+              <strong>正在连接确定性回测引擎</strong>
+              <span>编译完成后，这里会显示净值曲线、指标、审计和交易明细。</span>
             </div>
-            <div className="strategy-equity-value">
-              <span>期末权益</span>
-              <strong>{formatCurrency(result.finalEquity)}</strong>
-              <small className={result.totalReturn >= 0 ? 'positive' : 'negative'}>
-                {formatPercent(result.totalReturn)}
-              </small>
-            </div>
-          </section>
-
-          <div className="strategy-metric-grid">
-            {metrics.map((metric) => (
-              <article key={metric.label}>
-                <span>{metric.label}</span>
-                <strong className={metric.tone}>{metric.value}</strong>
-              </article>
-            ))}
-          </div>
-
-          <section className="strategy-chart-section">
-            <div className="strategy-result-heading">
-              <div>
-                <span>04 / EQUITY CURVE</span>
-                <h3>策略与买入持有</h3>
-              </div>
-              <div className="strategy-chart-legend">
-                <span><i className="strategy-line" />Strategy</span>
-                <span><i className="benchmark-line" />Benchmark</span>
-              </div>
-            </div>
-            <div className="strategy-chart">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={result.equityCurve} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.07)" strokeDasharray="3 4" />
-                  <XAxis
-                    dataKey="date"
-                    tickLine={false}
-                    axisLine={false}
-                    minTickGap={42}
-                    tick={{ fill: '#76818a', fontSize: 12 }}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    width={70}
-                    domain={['auto', 'auto']}
-                    tickFormatter={(value) => formatCurrency(Number(value), true)}
-                    tick={{ fill: '#76818a', fontSize: 12 }}
-                  />
-                  <Tooltip content={<EquityTooltip />} />
-                  <Line
-                    type="monotone"
-                    dataKey="strategy"
-                    name="Strategy"
-                    stroke="#4d8dff"
-                    strokeWidth={2.4}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="benchmark"
-                    name="Benchmark"
-                    stroke="#69737c"
-                    strokeWidth={1.5}
-                    strokeDasharray="5 5"
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <div className="strategy-audit-grid">
-            <section className="strategy-audit-section">
-              <div className="strategy-result-heading">
+          ) : (
+            <>
+              <section className="strategy-result-hero">
                 <div>
-                  <span>05 / COMPILED CONTRACT</span>
-                  <h3>规则解释</h3>
+                  <span className="strategy-eyebrow">BACKTEST OUTPUT</span>
+                  <h2>{definition.name}</h2>
+                  <p>{result.engine} / {result.dataSource}</p>
                 </div>
-                <Braces size={20} />
-              </div>
-              <ol className="strategy-rule-list">
-                {compilation.interpretation.map((rule, index) => (
-                  <li key={rule}>
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    <p>{rule}</p>
-                  </li>
-                ))}
-              </ol>
-              <div className="strategy-contract-version">
-                <ShieldCheck size={17} />
-                {compilation.contractVersion}
-              </div>
-            </section>
-
-            <section className="strategy-audit-section">
-              <div className="strategy-result-heading">
-                <div>
-                  <span>06 / ASSUMPTIONS</span>
-                  <h3>运行边界</h3>
+                <div className="strategy-equity-value">
+                  <span>期末权益</span>
+                  <strong>{formatCurrency(result.finalEquity)}</strong>
+                  <small className={result.totalReturn >= 0 ? 'positive' : 'negative'}>
+                    {formatPercent(result.totalReturn)}
+                  </small>
                 </div>
-                <SlidersHorizontal size={20} />
-              </div>
-              <ul className="strategy-assumption-list">
-                {result.assumptions.map((assumption) => (
-                  <li key={assumption}>
-                    <CircleAlert size={16} />
-                    <span>{assumption}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </div>
+              </section>
 
-          <section className="strategy-trades-section">
-            <div className="strategy-result-heading">
-              <div>
-                <span>07 / TRADE LEDGER</span>
-                <h3>模拟交易明细</h3>
+              <div className="strategy-metric-grid">
+                {metrics.map((metric) => (
+                  <article key={metric.label}>
+                    <span>{metric.label}</span>
+                    <strong className={metric.tone}>{metric.value}</strong>
+                  </article>
+                ))}
               </div>
-              <span className="strategy-profit-factor">
-                Profit factor <strong>{formatMetric(result.profitFactor)}</strong>
-              </span>
-            </div>
-            <div className="strategy-trade-table">
-              <div className="strategy-trade-row strategy-trade-head">
-                <span>ID</span>
-                <span>Entry</span>
-                <span>Exit</span>
-                <span>Qty</span>
-                <span>P&amp;L</span>
-                <span>Return</span>
-                <span>Reason</span>
-              </div>
-              {result.trades.length > 0 ? (
-                result.trades.slice().reverse().slice(0, 8).map((trade) => (
-                  <div className="strategy-trade-row" key={trade.id}>
-                    <span>{trade.id}</span>
-                    <span>{trade.entryDate}</span>
-                    <span>{trade.exitDate}</span>
-                    <span>{trade.quantity}</span>
-                    <span className={trade.pnl >= 0 ? 'positive' : 'negative'}>
-                      {formatCurrency(trade.pnl)}
-                    </span>
-                    <span className={trade.returnPercent >= 0 ? 'positive' : 'negative'}>
-                      {formatPercent(trade.returnPercent)}
-                    </span>
-                    <span>{trade.exitReason}</span>
+
+              <section className="strategy-chart-section">
+                <div className="strategy-result-heading">
+                  <div>
+                    <span>04 / EQUITY CURVE</span>
+                    <h3>策略与买入持有</h3>
                   </div>
-                ))
-              ) : (
-                <div className="strategy-no-trades">
-                  <Gauge size={22} />
-                  当前参数未产生交易，调整规则后重新运行。
+                  <div className="strategy-chart-legend">
+                    <span><i className="strategy-line" />Strategy</span>
+                    <span><i className="benchmark-line" />Benchmark</span>
+                  </div>
                 </div>
-              )}
-            </div>
-          </section>
+                <div className="strategy-chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={result.equityCurve} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.07)" strokeDasharray="3 4" />
+                      <XAxis
+                        dataKey="date"
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={42}
+                        tick={{ fill: '#76818a', fontSize: 12 }}
+                      />
+                      <YAxis
+                        tickLine={false}
+                        axisLine={false}
+                        width={70}
+                        domain={['auto', 'auto']}
+                        tickFormatter={(value) => formatCurrency(Number(value), true)}
+                        tick={{ fill: '#76818a', fontSize: 12 }}
+                      />
+                      <Tooltip content={<EquityTooltip />} />
+                      <Line
+                        type="monotone"
+                        dataKey="strategy"
+                        name="Strategy"
+                        stroke="#4d8dff"
+                        strokeWidth={2.4}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="benchmark"
+                        name="Benchmark"
+                        stroke="#69737c"
+                        strokeWidth={1.5}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
 
-          <footer className="strategy-next-step">
-            <FlaskConical size={20} />
-            <span>下一步：接入 FastAPI 市场数据工具、真实历史数据和样本外验证。</span>
-          </footer>
+              <div className="strategy-audit-grid">
+                <section className="strategy-audit-section">
+                  <div className="strategy-result-heading">
+                    <div>
+                      <span>05 / COMPILED CONTRACT</span>
+                      <h3>AI 规则解释</h3>
+                    </div>
+                    <Braces size={20} />
+                  </div>
+                  <ol className="strategy-rule-list">
+                    {(compilation?.interpretation ?? []).map((rule, index) => (
+                      <li key={rule}>
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <p>{rule}</p>
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="strategy-contract-version">
+                    <ShieldCheck size={17} />
+                    {compilation?.contractVersion ?? result.contractVersion}
+                  </div>
+                </section>
+
+                <section className="strategy-audit-section">
+                  <div className="strategy-result-heading">
+                    <div>
+                      <span>06 / ASSUMPTIONS</span>
+                      <h3>运行边界</h3>
+                    </div>
+                    <SlidersHorizontal size={20} />
+                  </div>
+                  <ul className="strategy-assumption-list">
+                    {[
+                      ...(compilation?.assumptions ?? []),
+                      ...(compilation?.warnings ?? []),
+                      ...result.assumptions,
+                    ].map((assumption) => (
+                      <li key={assumption}>
+                        <CircleAlert size={16} />
+                        <span>{assumption}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </div>
+
+              <section className="strategy-trades-section">
+                <div className="strategy-result-heading">
+                  <div>
+                    <span>07 / TRADE LEDGER</span>
+                    <h3>模拟交易明细</h3>
+                  </div>
+                  <span className="strategy-profit-factor">
+                    Profit factor <strong>{formatMetric(result.profitFactor)}</strong>
+                  </span>
+                </div>
+                <div className="strategy-trade-table">
+                  <div className="strategy-trade-row strategy-trade-head">
+                    <span>ID</span>
+                    <span>Entry</span>
+                    <span>Exit</span>
+                    <span>Qty</span>
+                    <span>P&amp;L</span>
+                    <span>Return</span>
+                    <span>Reason</span>
+                  </div>
+                  {result.trades.length > 0 ? (
+                    result.trades.slice().reverse().slice(0, 8).map((trade) => (
+                      <div className="strategy-trade-row" key={trade.id}>
+                        <span>{trade.id}</span>
+                        <span>{trade.entryDate}</span>
+                        <span>{trade.exitDate}</span>
+                        <span>{trade.quantity}</span>
+                        <span className={trade.pnl >= 0 ? 'positive' : 'negative'}>
+                          {formatCurrency(trade.pnl)}
+                        </span>
+                        <span className={trade.returnPercent >= 0 ? 'positive' : 'negative'}>
+                          {formatPercent(trade.returnPercent)}
+                        </span>
+                        <span>{trade.exitReason}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="strategy-no-trades">
+                      <Gauge size={22} />
+                      当前参数未产生交易，调整规则后重新运行。
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="strategy-engine-audit">
+                <div>
+                  <span>08 / ENGINE AUDIT</span>
+                  <h3>可复现性检查</h3>
+                </div>
+                <ul>
+                  {result.audit.map((item) => (
+                    <li key={item} className={item.startsWith('PASS') ? 'is-pass' : ''}>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <footer className="strategy-next-step">
+                <FlaskConical size={20} />
+                <span>当前已由 FastAPI 服务端执行；下一步接入真实历史行情与样本外验证。</span>
+              </footer>
+            </>
+          )}
         </main>
       </div>
     </div>
