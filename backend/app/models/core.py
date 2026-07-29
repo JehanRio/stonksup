@@ -137,7 +137,7 @@ class Strategy(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default="draft",
     )
     contract_version: Mapped[str] = mapped_column(
-        String(16),
+        String(32),
         nullable=False,
         default="1.0",
         server_default="1.0",
