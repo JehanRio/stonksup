@@ -1,7 +1,10 @@
+from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.market_data import MarketDataProvider, default_start_date
 
 
 class StrategyKind(str, Enum):
@@ -59,15 +62,33 @@ class BacktestConfig(BaseModel):
     slippage_bps: float = Field(default=5, ge=0, le=1_000)
 
 
+class BacktestDataConfig(BaseModel):
+    mode: Literal["demo", "real"] = "demo"
+    provider: MarketDataProvider = "twelvedata"
+    start_date: date = Field(default_factory=default_start_date)
+    end_date: date = Field(default_factory=date.today)
+    refresh: bool = False
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "BacktestDataConfig":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must be on or before end_date")
+        if (self.end_date - self.start_date).days > 365 * 20:
+            raise ValueError("date range cannot exceed 20 years")
+        return self
+
+
 class RunBacktestRequest(BaseModel):
     strategy: StrategySpec
     config: BacktestConfig = Field(default_factory=BacktestConfig)
+    data: BacktestDataConfig = Field(default_factory=BacktestDataConfig)
     bars: int = Field(default=756, ge=120, le=5_000)
 
 
 class CompileAndRunRequest(BaseModel):
     prompt: str = Field(min_length=4, max_length=4_000)
     config: BacktestConfig = Field(default_factory=BacktestConfig)
+    data: BacktestDataConfig = Field(default_factory=BacktestDataConfig)
     bars: int = Field(default=756, ge=120, le=5_000)
 
 
@@ -118,3 +139,22 @@ class BacktestResult(BaseModel):
 class CompileAndRunResult(BaseModel):
     compilation: StrategyCompilation
     backtest: BacktestResult
+
+
+class BacktestRunSummary(BaseModel):
+    run_id: str
+    created_at: datetime
+    symbol: str
+    strategy_name: str
+    strategy_kind: str
+    status: str
+    data_source: str
+    bar_count: int
+    trade_count: int
+    total_return: float
+    final_equity: float
+    as_of: str
+
+
+class BacktestRunHistory(BaseModel):
+    runs: list[BacktestRunSummary]

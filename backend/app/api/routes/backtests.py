@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy.orm import Session
 
-from app.api.dependencies import success_response
+from app.api.dependencies import (
+    get_app_settings,
+    get_db_session,
+    success_response,
+)
+from app.core.config import Settings
 from app.schemas.backtests import (
     BacktestResult,
+    BacktestRunHistory,
     CompileAndRunRequest,
     CompileAndRunResult,
     CompileStrategyRequest,
@@ -10,7 +17,12 @@ from app.schemas.backtests import (
     StrategyCompilation,
 )
 from app.schemas.common import ApiResponse
-from app.services.backtest_engine import create_seeded_daily_history, run_backtest
+from app.services.backtest_data import apply_data_provenance, load_backtest_data
+from app.services.backtest_engine import run_backtest
+from app.services.backtest_persistence import (
+    get_backtest_run_history,
+    persist_backtest,
+)
 from app.services.strategy_compiler import compile_strategy
 
 
@@ -25,13 +37,41 @@ def compile_natural_language_strategy(
     return success_response(request, compile_strategy(payload))
 
 
+@router.get("/runs", response_model=ApiResponse[BacktestRunHistory])
+def list_backtest_runs(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[BacktestRunHistory]:
+    return success_response(request, get_backtest_run_history(session, limit))
+
+
 @router.post("/run", response_model=ApiResponse[BacktestResult])
 def run_compiled_strategy(
     payload: RunBacktestRequest,
     request: Request,
+    settings: Settings = Depends(get_app_settings),
+    session: Session = Depends(get_db_session),
 ) -> ApiResponse[BacktestResult]:
-    rows = create_seeded_daily_history(payload.strategy.symbol, payload.bars)
-    result = run_backtest(rows, payload.strategy, payload.config)
+    loaded = load_backtest_data(
+        session,
+        settings,
+        payload.strategy,
+        payload.data,
+        payload.bars,
+    )
+    result = apply_data_provenance(
+        run_backtest(loaded.rows, payload.strategy, payload.config),
+        loaded,
+    )
+    persist_backtest(
+        session,
+        prompt=payload.strategy.name,
+        strategy_spec=payload.strategy,
+        config=payload.config,
+        data=payload.data,
+        result=result,
+    )
     return success_response(request, result)
 
 
@@ -39,10 +79,29 @@ def run_compiled_strategy(
 def compile_and_run_strategy(
     payload: CompileAndRunRequest,
     request: Request,
+    settings: Settings = Depends(get_app_settings),
+    session: Session = Depends(get_db_session),
 ) -> ApiResponse[CompileAndRunResult]:
     compilation = compile_strategy(CompileStrategyRequest(prompt=payload.prompt))
-    rows = create_seeded_daily_history(compilation.strategy.symbol, payload.bars)
-    result = run_backtest(rows, compilation.strategy, payload.config)
+    loaded = load_backtest_data(
+        session,
+        settings,
+        compilation.strategy,
+        payload.data,
+        payload.bars,
+    )
+    result = apply_data_provenance(
+        run_backtest(loaded.rows, compilation.strategy, payload.config),
+        loaded,
+    )
+    persist_backtest(
+        session,
+        prompt=payload.prompt,
+        strategy_spec=compilation.strategy,
+        config=payload.config,
+        data=payload.data,
+        result=result,
+    )
     return success_response(
         request,
         CompileAndRunResult(compilation=compilation, backtest=result),

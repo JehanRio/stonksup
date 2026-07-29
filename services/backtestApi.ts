@@ -41,6 +41,38 @@ export type BacktestConfig = {
   slippageBps: number;
 };
 
+export type BacktestDataConfig = {
+  mode: 'demo' | 'real';
+  provider: 'twelvedata';
+  startDate: string;
+  endDate: string;
+  refresh: boolean;
+};
+
+export type MarketDataCapability = {
+  provider: 'twelvedata';
+  configured: boolean;
+  intervals: string[];
+  maximumPointsPerRequest: number;
+  storage: 'postgresql' | 'sqlite' | 'unconfigured';
+  message: string;
+};
+
+export type BacktestRunSummary = {
+  runId: string;
+  createdAt: string;
+  symbol: string;
+  strategyName: string;
+  strategyKind: string;
+  status: string;
+  dataSource: string;
+  barCount: number;
+  tradeCount: number;
+  totalReturn: number;
+  finalEquity: number;
+  asOf: string;
+};
+
 export type BacktestTrade = {
   id: string;
   entryDate: string;
@@ -162,11 +194,37 @@ type ApiBacktestResult = {
   audit: string[];
 };
 
-const apiRequest = async <Data>(path: string, body: unknown): Promise<Data> => {
+type ApiMarketDataCapability = {
+  provider: 'twelvedata';
+  configured: boolean;
+  intervals: string[];
+  maximum_points_per_request: number;
+  storage: 'postgresql' | 'sqlite' | 'unconfigured';
+  message: string;
+};
+
+type ApiBacktestRunSummary = {
+  run_id: string;
+  created_at: string;
+  symbol: string;
+  strategy_name: string;
+  strategy_kind: string;
+  status: string;
+  data_source: string;
+  bar_count: number;
+  trade_count: number;
+  total_return: number;
+  final_equity: number;
+  as_of: string;
+};
+
+const apiRequest = async <Data>(
+  path: string,
+  options: RequestInit = {},
+): Promise<Data> => {
   const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    ...options,
+    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
   });
   const payload = (await response.json()) as ApiEnvelope<Data>;
   if (!response.ok || !payload.success || !payload.data) {
@@ -174,6 +232,9 @@ const apiRequest = async <Data>(path: string, body: unknown): Promise<Data> => {
   }
   return payload.data;
 };
+
+const post = <Data>(path: string, body: unknown) =>
+  apiRequest<Data>(path, { method: 'POST', body: JSON.stringify(body) });
 
 const mapStrategy = (strategy: ApiStrategySpec): StrategySpec => ({
   name: strategy.name,
@@ -213,6 +274,14 @@ const serializeStrategy = (strategy: StrategySpec): ApiStrategySpec => ({
   signal_at: strategy.signalAt,
   fill_at: strategy.fillAt,
   long_only: strategy.longOnly,
+});
+
+const serializeData = (data: BacktestDataConfig) => ({
+  mode: data.mode,
+  provider: data.provider,
+  start_date: data.startDate,
+  end_date: data.endDate,
+  refresh: data.refresh,
 });
 
 const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
@@ -265,25 +334,63 @@ export const compileStrategy = async (
   prompt: string,
   preferredKind?: StrategyKind,
 ): Promise<StrategyCompilation> => {
-  const result = await apiRequest<ApiCompilation>('/api/v1/backtests/compile', {
+  const result = await post<ApiCompilation>('/api/v1/backtests/compile', {
     prompt,
     preferred_kind: preferredKind,
   });
   return mapCompilation(result);
 };
 
+export const getMarketDataCapabilities = async (): Promise<MarketDataCapability> => {
+  const result = await apiRequest<ApiMarketDataCapability>(
+    '/api/v1/market-data/capabilities',
+  );
+  return {
+    provider: result.provider,
+    configured: result.configured,
+    intervals: result.intervals,
+    maximumPointsPerRequest: result.maximum_points_per_request,
+    storage: result.storage,
+    message: result.message,
+  };
+};
+
+export const getBacktestRunHistory = async (
+  limit = 8,
+): Promise<BacktestRunSummary[]> => {
+  const result = await apiRequest<{ runs: ApiBacktestRunSummary[] }>(
+    `/api/v1/backtests/runs?limit=${limit}`,
+  );
+  return result.runs.map((run) => ({
+    runId: run.run_id,
+    createdAt: run.created_at,
+    symbol: run.symbol,
+    strategyName: run.strategy_name,
+    strategyKind: run.strategy_kind,
+    status: run.status,
+    dataSource: run.data_source,
+    barCount: run.bar_count,
+    tradeCount: run.trade_count,
+    totalReturn: run.total_return,
+    finalEquity: run.final_equity,
+    asOf: run.as_of,
+  }));
+};
+
 export const runStrategy = async (
   strategy: StrategySpec,
   config: BacktestConfig,
+  data: BacktestDataConfig,
   bars = 756,
 ): Promise<BacktestResult> => {
-  const result = await apiRequest<ApiBacktestResult>('/api/v1/backtests/run', {
+  const result = await post<ApiBacktestResult>('/api/v1/backtests/run', {
     strategy: serializeStrategy(strategy),
     config: {
       initial_capital: config.initialCapital,
       commission_bps: config.commissionBps,
       slippage_bps: config.slippageBps,
     },
+    data: serializeData(data),
     bars,
   });
   return mapBacktest(result);
@@ -292,9 +399,10 @@ export const runStrategy = async (
 export const compileAndRunStrategy = async (
   prompt: string,
   config: BacktestConfig,
+  data: BacktestDataConfig,
   bars = 756,
 ): Promise<{ compilation: StrategyCompilation; backtest: BacktestResult }> => {
-  const result = await apiRequest<{
+  const result = await post<{
     compilation: ApiCompilation;
     backtest: ApiBacktestResult;
   }>('/api/v1/backtests/compile-and-run', {
@@ -304,6 +412,7 @@ export const compileAndRunStrategy = async (
       commission_bps: config.commissionBps,
       slippage_bps: config.slippageBps,
     },
+    data: serializeData(data),
     bars,
   });
   return {

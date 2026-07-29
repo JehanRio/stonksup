@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -55,6 +56,67 @@ class Instrument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="instrument",
         passive_deletes=True,
     )
+    market_bars: Mapped[list[MarketBar]] = relationship(
+        back_populates="instrument",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class MarketBar(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "market_bars"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id",
+            "timeframe",
+            "trading_date",
+            "source",
+            name="uq_market_bars_instrument_timeframe_date_source",
+        ),
+        Index(
+            "ix_market_bars_instrument_timeframe_date",
+            "instrument_id",
+            "timeframe",
+            "trading_date",
+        ),
+    )
+
+    instrument_id: Mapped[UUID] = mapped_column(
+        ForeignKey("instruments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    timeframe: Mapped[str] = mapped_column(
+        String(8),
+        nullable=False,
+        default="1d",
+        server_default="1d",
+    )
+    trading_date: Mapped[date] = mapped_column(nullable=False)
+    open: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    high: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    low: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    adjusted_close: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    volume: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    adjustment: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="raw",
+        server_default="raw",
+    )
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+
+    instrument: Mapped[Instrument] = relationship(back_populates="market_bars")
 
 
 class Strategy(UUIDPrimaryKeyMixin, TimestampMixin, Base):

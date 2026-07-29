@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, inspect
 EXPECTED_TABLES = {
     "alembic_version",
     "instruments",
+    "market_bars",
     "strategies",
     "backtest_runs",
     "backtest_trades",

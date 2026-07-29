@@ -32,6 +32,9 @@ services:
       STONKSUP_ENVIRONMENT: production
       STONKSUP_BUILD_SHA: ${IMAGE_TAG:-latest}
       STONKSUP_DATABASE_URL: postgresql+psycopg://stonksup:${POSTGRES_PASSWORD}@database:5432/stonksup
+      STONKSUP_MARKET_DATA_PROVIDER: ${STONKSUP_MARKET_DATA_PROVIDER:-twelvedata}
+      STONKSUP_TWELVE_DATA_API_KEY: ${STONKSUP_TWELVE_DATA_API_KEY:-}
+      STONKSUP_MARKET_DATA_TIMEOUT_SECONDS: ${STONKSUP_MARKET_DATA_TIMEOUT_SECONDS:-12}
     depends_on:
       database:
         condition: service_healthy

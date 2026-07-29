@@ -28,6 +28,7 @@ dist-ssr
 backend/.venv/
 backend/.pytest_cache/
 backend/.coverage
+backend/*.db
 **/__pycache__/
 *.py[cod]
 

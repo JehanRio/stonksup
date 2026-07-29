@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.__about__ import __version__
@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     build_sha: str = "local"
     database_url: str | None = None
+    market_data_provider: Literal["twelvedata"] = "twelvedata"
+    twelve_data_api_key: SecretStr | None = None
+    market_data_timeout_seconds: float = Field(default=12, gt=0, le=60)
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://127.0.0.1:4175",

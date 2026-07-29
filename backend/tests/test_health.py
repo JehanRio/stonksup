@@ -29,7 +29,7 @@ def test_ready_health_reports_database_state(client: TestClient) -> None:
     assert body["data"]["status"] == "ready"
     assert body["data"]["checks"] == {
         "api": "ready",
-        "database": "not_configured",
+        "database": "up",
     }
 
 
