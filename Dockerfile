@@ -1,14 +1,19 @@
-FROM node:22-alpine AS build
+ARG NODE_BASE_IMAGE=node:22-alpine
+ARG NGINX_BASE_IMAGE=nginx:1.28-alpine
+
+FROM ${NODE_BASE_IMAGE} AS build
+
+ARG NPM_REGISTRY=https://registry.npmjs.org
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry="$NPM_REGISTRY"
 
 COPY . .
 RUN npm run build
 
-FROM nginx:1.28-alpine AS runtime
+FROM ${NGINX_BASE_IMAGE} AS runtime
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 RUN nginx -t

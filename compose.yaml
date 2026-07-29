@@ -22,6 +22,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${STONKSUP_PYTHON_BASE_IMAGE:-mirror.ccs.tencentyun.com/library/python:3.13-slim}
+        PIP_INDEX_URL: ${STONKSUP_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     image: ${STONKSUP_BACKEND_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-backend}:${IMAGE_TAG:-latest}
     container_name: stonksup-backend
     restart: unless-stopped
@@ -49,6 +52,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NODE_BASE_IMAGE: ${STONKSUP_NODE_BASE_IMAGE:-mirror.ccs.tencentyun.com/library/node:22-alpine}
+        NGINX_BASE_IMAGE: ${STONKSUP_NGINX_BASE_IMAGE:-mirror.ccs.tencentyun.com/library/nginx:1.28-alpine}
+        NPM_REGISTRY: ${STONKSUP_NPM_REGISTRY:-https://registry.npmmirror.com}
     image: ${STONKSUP_IMAGE:-ccr.ccs.tencentyun.com/jehan-stonksup/stonksup-web}:${IMAGE_TAG:-latest}
     container_name: stonksup-web
     restart: unless-stopped
