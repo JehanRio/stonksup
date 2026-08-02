@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Braces,
   CheckCircle2,
@@ -8,11 +8,13 @@ import {
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
+  ZoomOut,
 } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,6 +27,7 @@ import type {
   StrategySpec,
 } from '../../../services/backtestApi';
 import '../../../styles/strategy-lab-phase3.css';
+import '../../../styles/strategy-lab-phase4.css';
 
 
 const formatCurrency = (value: number, compact = false) =>
@@ -103,6 +106,18 @@ const EquityTooltip = ({ active, payload, label }: any) => {
 };
 
 
+type ChartRange = {
+  start: string;
+  end: string;
+};
+
+const orderChartRange = ({ start, end }: ChartRange): ChartRange =>
+  start <= end ? { start, end } : { start: end, end: start };
+
+const getChartDate = (state: any): string | null =>
+  typeof state?.activeLabel === 'string' ? state.activeLabel : null;
+
+
 type Props = {
   status: 'loading' | 'ready' | 'running' | 'complete' | 'error';
   result: BacktestResult | null;
@@ -123,6 +138,20 @@ const StrategyResultPanel: React.FC<Props> = ({
     () => result ? resultMetrics(result, riskFreeRatePercent) : [],
     [result, riskFreeRatePercent],
   );
+  const [zoomRange, setZoomRange] = useState<ChartRange | null>(null);
+  const [dragRange, setDragRange] = useState<ChartRange | null>(null);
+  const visibleEquityCurve = useMemo(() => {
+    const equityCurve = result?.equityCurve ?? [];
+    if (!zoomRange) return equityCurve;
+    const range = orderChartRange(zoomRange);
+    return equityCurve.filter((point) => point.date >= range.start && point.date <= range.end);
+  }, [result, zoomRange]);
+
+  useEffect(() => {
+    setZoomRange(null);
+    setDragRange(null);
+  }, [result?.runId]);
+
   const currentRules = compilation?.interpretation ?? describeStrategy(definition);
   const statusLabel = {
     loading: 'CONNECTING ENGINE',
@@ -138,6 +167,38 @@ const StrategyResultPanel: React.FC<Props> = ({
     complete: ['运行已完成', '结果加载中。'],
     error: ['本次运行未完成', '请根据上方错误信息修正配置后重新运行。'],
   }[status];
+
+  const beginChartZoom = (state: any, event: React.SyntheticEvent) => {
+    const date = getChartDate(state);
+    if (!date) return;
+    event.preventDefault();
+    setDragRange({ start: date, end: date });
+  };
+
+  const updateChartZoom = (state: any) => {
+    const date = getChartDate(state);
+    if (!date) return;
+    setDragRange((current) => current ? { ...current, end: date } : null);
+  };
+
+  const commitChartZoom = () => {
+    if (!dragRange) return;
+    const range = orderChartRange(dragRange);
+    const selectedPoints = visibleEquityCurve.filter(
+      (point) => point.date >= range.start && point.date <= range.end,
+    );
+    if (range.start !== range.end && selectedPoints.length >= 3) {
+      setZoomRange(range);
+    }
+    setDragRange(null);
+  };
+
+  const resetChartZoom = () => {
+    setZoomRange(null);
+    setDragRange(null);
+  };
+
+  const orderedDragRange = dragRange ? orderChartRange(dragRange) : null;
 
   return (
     <main className="strategy-results">
@@ -272,13 +333,54 @@ const StrategyResultPanel: React.FC<Props> = ({
                 <span><i className="independent-line" />{result.benchmarkSymbol}</span>
               </div>
             </div>
-            <div className="strategy-chart">
+            <div
+              className={`strategy-chart strategy-chart-zoom ${dragRange ? 'is-selecting' : ''}`}
+              data-zoom-start={zoomRange?.start ?? ''}
+              data-zoom-end={zoomRange?.end ?? ''}
+            >
+              {zoomRange ? (
+                <button
+                  type="button"
+                  className="strategy-chart-reset"
+                  onClick={resetChartZoom}
+                  aria-label="重置图表缩放"
+                  title="重置图表缩放"
+                >
+                  <ZoomOut size={16} />
+                </button>
+              ) : null}
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={result.equityCurve} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
+                <LineChart
+                  data={visibleEquityCurve}
+                  margin={{ top: 12, right: 8, bottom: 0, left: 0 }}
+                  onMouseDown={beginChartZoom}
+                  onMouseMove={updateChartZoom}
+                  onMouseUp={commitChartZoom}
+                  onMouseLeave={commitChartZoom}
+                >
                   <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.07)" strokeDasharray="3 4" />
                   <XAxis dataKey="date" tickLine={false} axisLine={false} minTickGap={42} tick={{ fill: '#76818a', fontSize: 12 }} />
                   <YAxis tickLine={false} axisLine={false} width={70} domain={['auto', 'auto']} tickFormatter={(value) => formatCurrency(Number(value), true)} tick={{ fill: '#76818a', fontSize: 12 }} />
                   <Tooltip content={<EquityTooltip />} />
+                  {orderedDragRange ? (
+                    <ReferenceArea
+                      x1={orderedDragRange.start}
+                      x2={orderedDragRange.end}
+                      shape={({ x, y, width, height }: any) => (
+                        <rect
+                          x={x}
+                          y={y}
+                          width={width}
+                          height={height}
+                          fill="#4d8dff"
+                          fillOpacity={0.14}
+                          stroke="#4d8dff"
+                          strokeOpacity={0.72}
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      )}
+                    />
+                  ) : null}
                   <Line type="monotone" dataKey="strategy" name="Strategy" stroke="#4d8dff" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                   <Line type="monotone" dataKey="asset" name={`${result.symbol} Buy & Hold`} stroke="#73808a" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
                   <Line type="monotone" dataKey="benchmark" name={result.benchmarkSymbol} stroke="#e7b84b" strokeWidth={1.6} strokeDasharray="2 5" dot={false} connectNulls={false} isAnimationActive={false} />

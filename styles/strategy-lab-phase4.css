@@ -1,0 +1,43 @@
+.strategy-chart-reset {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--su-line);
+  border-radius: 4px;
+  background: rgba(13, 17, 20, 0.92);
+  color: var(--su-soft);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.strategy-chart-reset:hover,
+.strategy-chart-reset:focus-visible {
+  border-color: rgba(77, 141, 255, 0.55);
+  background: rgba(77, 141, 255, 0.16);
+  color: #83adff;
+  outline: none;
+}
+
+.strategy-chart-zoom {
+  position: relative;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.strategy-chart-zoom.is-selecting {
+  cursor: ew-resize;
+}
+
+.strategy-chart-zoom .recharts-wrapper,
+.strategy-chart-zoom svg {
+  user-select: none;
+  -webkit-user-select: none;
+}
