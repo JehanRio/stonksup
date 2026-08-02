@@ -228,7 +228,7 @@ def _sync_window(
     end_date: date,
     force: bool,
 ) -> None:
-    if start_date > end_date:
+    if start_date > end_date or _weekday_count(start_date, end_date) == 0:
         return
     try:
         sync_daily_bars(

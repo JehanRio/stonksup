@@ -88,7 +88,7 @@ def test_real_backtest_fills_both_sides_of_cached_window(
     requested_start = date(2025, 1, 2)
     cached_start = date(2025, 3, 3)
     cached_end = date(2025, 6, 30)
-    requested_end = date(2025, 8, 1)
+    requested_end = date(2025, 8, 3)
     calls: list[tuple[str, date, date]] = []
 
     def fake_fetch(
@@ -170,10 +170,29 @@ def test_real_backtest_fills_both_sides_of_cached_window(
     assert quality["requested_start"] == requested_start.isoformat()
     assert quality["requested_end"] == requested_end.isoformat()
     assert quality["actual_start"] == requested_start.isoformat()
-    assert quality["actual_end"] == requested_end.isoformat()
+    assert quality["actual_end"] == date(2025, 8, 1).isoformat()
     assert quality["coverage_ratio"] == 1
     assert len(quality["strategy_hash"]) == 64
     assert len(quality["benchmark_hash"]) == 64
+
+    calls.clear()
+    with TestClient(create_app(settings)) as client:
+        repeated = client.post(
+            "/api/v1/backtests/compile-and-run",
+            json={
+                "prompt": "MU buy near EMA5 and sell when close falls below EMA5",
+                "data": {
+                    "mode": "real",
+                    "adjustment": "all",
+                    "benchmark_symbol": "SPY",
+                    "start_date": requested_start.isoformat(),
+                    "end_date": requested_end.isoformat(),
+                },
+            },
+        )
+
+    assert repeated.status_code == 200
+    assert calls == []
 
     engine.dispose()
     get_engine.cache_clear()
