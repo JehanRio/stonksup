@@ -45,6 +45,7 @@ const DEFAULT_CONFIG: BacktestConfig = {
   initialCapital: 100_000,
   commissionBps: 5,
   slippageBps: 5,
+  riskFreeRatePercent: 0,
 };
 
 const DEFAULT_DATA: BacktestDataConfig = {
@@ -75,6 +76,19 @@ const DEFAULT_STRATEGY: StrategySpec = {
   signalAt: 'close',
   fillAt: 'next_open',
   longOnly: true,
+};
+
+const contractName = (strategy: StrategySpec) => {
+  if (strategy.kind === 'ema_pullback') {
+    return `${strategy.symbol} EMA${strategy.emaPeriod} 回踩`;
+  }
+  if (strategy.kind === 'ma_crossover') {
+    return `${strategy.symbol} MA${strategy.fastPeriod}/${strategy.slowPeriod} 交叉`;
+  }
+  if (strategy.kind === 'momentum_breakout') {
+    return `${strategy.symbol} ${strategy.lookbackPeriod} 日突破`;
+  }
+  return `${strategy.symbol} RSI${strategy.rsiPeriod} 回归`;
 };
 
 const templates: Array<{
@@ -165,33 +179,35 @@ const StrategyLabPage: React.FC = () => {
     }
   };
 
+  const invalidateResult = () => {
+    setResult(null);
+    setErrorMessage('');
+    setStatus('ready');
+  };
+
   useEffect(() => {
     let active = true;
     const initialize = async () => {
-      const [capabilityResult] = await Promise.allSettled([
-        getMarketDataCapabilities(),
-        refreshHistory(),
-      ]);
+      const [capabilityResult, historyResult, compilationResult] =
+        await Promise.allSettled([
+          getMarketDataCapabilities(),
+          getBacktestRunHistory(6),
+          compileStrategy(INITIAL_PROMPT),
+        ]);
       if (!active) return;
       if (capabilityResult.status === 'fulfilled') {
         setCapability(capabilityResult.value);
       }
-      try {
-        const response = await compileAndRunStrategy(
-          INITIAL_PROMPT,
-          DEFAULT_CONFIG,
-          DEFAULT_DATA,
-        );
-        if (!active) return;
-        setCompilation(response.compilation);
-        setDefinition(response.compilation.strategy);
-        setResult(response.backtest);
-        setStatus('complete');
-        await refreshHistory();
-      } catch (error) {
-        if (!active) return;
+      if (historyResult.status === 'fulfilled') {
+        setHistory(historyResult.value);
+      }
+      if (compilationResult.status === 'fulfilled') {
+        setCompilation(compilationResult.value);
+        setDefinition(compilationResult.value.strategy);
+        setStatus('ready');
+      } else {
         setStatus('error');
-        setErrorMessage(error instanceof Error ? error.message : '无法连接回测服务');
+        setErrorMessage('无法连接策略编译服务');
       }
     };
     void initialize();
@@ -206,9 +222,23 @@ const StrategyLabPage: React.FC = () => {
     key: Key,
     value: StrategySpec[Key],
   ) => {
-    setDefinition((current) => ({ ...current, [key]: value }));
+    setDefinition((current) => {
+      const next = { ...current, [key]: value };
+      if (key === 'symbol') {
+        const previousSymbol = current.symbol.toUpperCase();
+        const nextSymbol = String(value).toUpperCase();
+        setDataConfig((data) => ({
+          ...data,
+          benchmarkSymbol: data.benchmarkSymbol === previousSymbol
+            ? nextSymbol
+            : data.benchmarkSymbol,
+        }));
+      }
+      return { ...next, name: contractName(next) };
+    });
+    setCompilation(null);
     setPromptDirty(false);
-    setStatus('ready');
+    invalidateResult();
   };
 
   const updateData = <Key extends keyof BacktestDataConfig>(
@@ -216,13 +246,22 @@ const StrategyLabPage: React.FC = () => {
     value: BacktestDataConfig[Key],
   ) => {
     setDataConfig((current) => ({ ...current, [key]: value }));
-    setStatus('ready');
+    invalidateResult();
+  };
+
+  const updateConfig = <Key extends keyof BacktestConfig>(
+    key: Key,
+    value: BacktestConfig[Key],
+  ) => {
+    setConfig((current) => ({ ...current, [key]: value }));
+    invalidateResult();
   };
 
   const applyTemplate = async (kind: StrategyKind) => {
     const template = templates.find((item) => item.kind === kind);
     if (!template) return;
     setPrompt(template.prompt);
+    setResult(null);
     setStatus('running');
     setErrorMessage('');
     try {
@@ -238,6 +277,7 @@ const StrategyLabPage: React.FC = () => {
   };
 
   const handleCompile = async () => {
+    setResult(null);
     setStatus('running');
     setErrorMessage('');
     try {
@@ -253,23 +293,29 @@ const StrategyLabPage: React.FC = () => {
   };
 
   const handleRun = async () => {
+    const runData = dataConfig;
+    setResult(null);
     setStatus('running');
     setErrorMessage('');
     try {
-      if (promptDirty || !compilation) {
-        const response = await compileAndRunStrategy(prompt, config, dataConfig);
+      if (promptDirty) {
+        const response = await compileAndRunStrategy(prompt, config, runData);
         setCompilation(response.compilation);
         setDefinition(response.compilation.strategy);
         setResult(response.backtest);
         setPromptDirty(false);
       } else {
-        setResult(await runStrategy(definition, config, dataConfig));
+        setResult(await runStrategy(definition, config, runData));
       }
       setStatus('complete');
       await refreshHistory();
     } catch (error) {
       setStatus('error');
       setErrorMessage(error instanceof Error ? error.message : '回测运行失败');
+    } finally {
+      if (runData.refresh) {
+        setDataConfig((current) => ({ ...current, refresh: false }));
+      }
     }
   };
 
@@ -279,7 +325,7 @@ const StrategyLabPage: React.FC = () => {
         <div>
           <span className="strategy-eyebrow">STRATEGY / RELATIVE BACKTEST</span>
           <h1>策略实验室</h1>
-          <p>使用复权行情、独立基准和可审计指标，判断策略是否真正创造超额收益。</p>
+          <p>使用完整复权区间、独立基准和可复现数据指纹，判断策略是否真正创造超额收益。</p>
         </div>
         <div className="strategy-header-actions">
           <span className={`strategy-data-badge ${dataConfig.mode === 'real' ? 'is-real' : ''}`}>
@@ -310,7 +356,7 @@ const StrategyLabPage: React.FC = () => {
         <div className="strategy-error-banner" role="alert">
           <CircleAlert size={18} />
           <span>{errorMessage}</span>
-          <small>{dataConfig.mode === 'real' ? '检查数据源、基准和日期范围' : '检查后端服务状态'}</small>
+          <small>{dataConfig.mode === 'real' ? '系统已阻止不完整行情进入回测' : '检查后端服务状态'}</small>
         </div>
       )}
 
@@ -360,7 +406,8 @@ const StrategyLabPage: React.FC = () => {
               onChange={(event) => {
                 setPrompt(event.target.value);
                 setPromptDirty(true);
-                setStatus('ready');
+                setCompilation(null);
+                invalidateResult();
               }}
               aria-label="口述策略"
             />
@@ -374,10 +421,15 @@ const StrategyLabPage: React.FC = () => {
               编译为结构化规则
               <ChevronRight size={18} />
             </button>
-            {compilation && (
+            {compilation ? (
               <div className="strategy-compiler-meta">
                 <span>{compilation.compiler}</span>
                 <strong>{Math.round(compilation.confidence * 100)}% 解析置信度</strong>
+              </div>
+            ) : (
+              <div className="strategy-compiler-meta is-edited">
+                <span>MANUAL CONTRACT</span>
+                <strong>当前参数将直接执行</strong>
               </div>
             )}
           </section>
@@ -424,9 +476,10 @@ const StrategyLabPage: React.FC = () => {
 
               <NumericField label="保护止损" value={definition.stopLossPercent} suffix="%" min={0} max={50} step={0.5} onChange={(value) => updateDefinition('stopLossPercent', value)} />
               <NumericField label="资金使用" value={definition.allocationPercent} suffix="%" min={1} max={100} onChange={(value) => updateDefinition('allocationPercent', value)} />
-              <NumericField label="初始资金" value={config.initialCapital} suffix="USD" min={1_000} step={1_000} onChange={(value) => { setConfig((current) => ({ ...current, initialCapital: value })); setStatus('ready'); }} />
-              <NumericField label="手续费" value={config.commissionBps} suffix="bps" min={0} max={1_000} onChange={(value) => { setConfig((current) => ({ ...current, commissionBps: value })); setStatus('ready'); }} />
-              <NumericField label="滑点" value={config.slippageBps} suffix="bps" min={0} max={1_000} onChange={(value) => { setConfig((current) => ({ ...current, slippageBps: value })); setStatus('ready'); }} />
+              <NumericField label="初始资金" value={config.initialCapital} suffix="USD" min={1_000} step={1_000} onChange={(value) => updateConfig('initialCapital', value)} />
+              <NumericField label="手续费" value={config.commissionBps} suffix="bps" min={0} max={1_000} onChange={(value) => updateConfig('commissionBps', value)} />
+              <NumericField label="滑点" value={config.slippageBps} suffix="bps" min={0} max={1_000} onChange={(value) => updateConfig('slippageBps', value)} />
+              <NumericField label="无风险利率" value={config.riskFreeRatePercent} suffix="%/年" min={-20} max={30} step={0.1} onChange={(value) => updateConfig('riskFreeRatePercent', value)} />
             </div>
           </section>
         </aside>
@@ -436,6 +489,7 @@ const StrategyLabPage: React.FC = () => {
           result={result}
           definition={definition}
           compilation={compilation}
+          riskFreeRatePercent={config.riskFreeRatePercent}
         />
       </div>
     </div>

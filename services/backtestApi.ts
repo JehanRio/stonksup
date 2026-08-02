@@ -41,6 +41,7 @@ export type BacktestConfig = {
   initialCapital: number;
   commissionBps: number;
   slippageBps: number;
+  riskFreeRatePercent: number;
 };
 
 export type BacktestDataConfig = {
@@ -97,16 +98,27 @@ export type EquityPoint = {
   date: string;
   strategy: number;
   asset: number;
-  benchmark: number;
+  benchmark: number | null;
   drawdown: number;
 };
 
 export type DataQualityReport = {
-  status: 'pass' | 'warn';
+  status: 'pass' | 'warn' | 'fail';
   adjustment: PriceAdjustment;
+  requestedStart: string;
+  requestedEnd: string;
+  actualStart: string;
+  actualEnd: string;
+  benchmarkStart: string;
+  benchmarkEnd: string;
+  coverageRatio: number;
+  benchmarkCoverageRatio: number;
+  staleTradingDays: number;
   strategyBars: number;
   benchmarkBars: number;
   alignedBars: number;
+  strategyHash: string;
+  benchmarkHash: string;
   checks: string[];
 };
 
@@ -129,6 +141,7 @@ export type BacktestResult = {
   assetReturn: number;
   benchmarkReturn: number;
   excessReturn: number;
+  relativeReturn: number;
   maxDrawdown: number;
   sharpeRatio: number;
   sortinoRatio: number;
@@ -151,7 +164,11 @@ export type BacktestResult = {
 type ApiEnvelope<Data> = {
   success: boolean;
   data: Data | null;
-  error: { code: string; message: string } | null;
+  error: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  } | null;
 };
 
 type ApiStrategySpec = {
@@ -185,6 +202,26 @@ type ApiCompilation = {
   compiler: string;
 };
 
+type ApiDataQuality = {
+  status: 'pass' | 'warn' | 'fail';
+  adjustment: PriceAdjustment;
+  requested_start: string;
+  requested_end: string;
+  actual_start: string;
+  actual_end: string;
+  benchmark_start: string;
+  benchmark_end: string;
+  coverage_ratio: number;
+  benchmark_coverage_ratio: number;
+  stale_trading_days: number;
+  strategy_bars: number;
+  benchmark_bars: number;
+  aligned_bars: number;
+  strategy_hash: string;
+  benchmark_hash: string;
+  checks: string[];
+};
+
 type ApiBacktestResult = {
   run_id: string;
   symbol: string;
@@ -204,6 +241,7 @@ type ApiBacktestResult = {
   asset_return: number;
   benchmark_return: number;
   excess_return: number;
+  relative_return: number;
   max_drawdown: number;
   sharpe_ratio: number;
   sortino_ratio: number;
@@ -236,14 +274,7 @@ type ApiBacktestResult = {
   }>;
   assumptions: string[];
   audit: string[];
-  data_quality: {
-    status: 'pass' | 'warn';
-    adjustment: PriceAdjustment;
-    strategy_bars: number;
-    benchmark_bars: number;
-    aligned_bars: number;
-    checks: string[];
-  };
+  data_quality: ApiDataQuality;
 };
 
 type ApiMarketDataCapability = {
@@ -284,7 +315,13 @@ const apiRequest = async <Data>(
   });
   const payload = (await response.json()) as ApiEnvelope<Data>;
   if (!response.ok || !payload.success || !payload.data) {
-    throw new Error(payload.error?.message || `Request failed with status ${response.status}`);
+    const details = payload.error?.details;
+    const coverage = details?.actual_start && details?.actual_end
+      ? ` 实际数据：${details.actual_start} 至 ${details.actual_end}。`
+      : '';
+    throw new Error(
+      `${payload.error?.message || `Request failed with status ${response.status}`}${coverage}`,
+    );
   }
   return payload.data;
 };
@@ -342,6 +379,13 @@ const serializeData = (data: BacktestDataConfig) => ({
   refresh: data.refresh,
 });
 
+const serializeConfig = (config: BacktestConfig) => ({
+  initial_capital: config.initialCapital,
+  commission_bps: config.commissionBps,
+  slippage_bps: config.slippageBps,
+  risk_free_rate_percent: config.riskFreeRatePercent,
+});
+
 const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
   prompt: compilation.prompt,
   strategy: mapStrategy(compilation.strategy),
@@ -351,6 +395,26 @@ const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
   confidence: compilation.confidence,
   contractVersion: compilation.contract_version,
   compiler: compilation.compiler,
+});
+
+const mapDataQuality = (quality: ApiDataQuality): DataQualityReport => ({
+  status: quality.status,
+  adjustment: quality.adjustment,
+  requestedStart: quality.requested_start,
+  requestedEnd: quality.requested_end,
+  actualStart: quality.actual_start,
+  actualEnd: quality.actual_end,
+  benchmarkStart: quality.benchmark_start,
+  benchmarkEnd: quality.benchmark_end,
+  coverageRatio: quality.coverage_ratio,
+  benchmarkCoverageRatio: quality.benchmark_coverage_ratio,
+  staleTradingDays: quality.stale_trading_days,
+  strategyBars: quality.strategy_bars,
+  benchmarkBars: quality.benchmark_bars,
+  alignedBars: quality.aligned_bars,
+  strategyHash: quality.strategy_hash,
+  benchmarkHash: quality.benchmark_hash,
+  checks: quality.checks,
 });
 
 const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
@@ -376,6 +440,7 @@ const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
     assetReturn: result.asset_return,
     benchmarkReturn: result.benchmark_return,
     excessReturn: result.excess_return,
+    relativeReturn: result.relative_return,
     maxDrawdown: result.max_drawdown,
     sharpeRatio: result.sharpe_ratio,
     sortinoRatio: result.sortino_ratio,
@@ -392,7 +457,7 @@ const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
       date: point.date,
       strategy: point.strategy,
       asset: point.benchmark,
-      benchmark: benchmarkByDate.get(point.date) ?? point.benchmark,
+      benchmark: benchmarkByDate.get(point.date) ?? null,
       drawdown: point.drawdown,
     })),
     trades: result.trades.map((trade) => ({
@@ -408,14 +473,7 @@ const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
     })),
     assumptions: result.assumptions,
     audit: result.audit,
-    dataQuality: {
-      status: result.data_quality.status,
-      adjustment: result.data_quality.adjustment,
-      strategyBars: result.data_quality.strategy_bars,
-      benchmarkBars: result.data_quality.benchmark_bars,
-      alignedBars: result.data_quality.aligned_bars,
-      checks: result.data_quality.checks,
-    },
+    dataQuality: mapDataQuality(result.data_quality),
   };
 };
 
@@ -478,11 +536,7 @@ export const runStrategy = async (
 ): Promise<BacktestResult> => {
   const result = await post<ApiBacktestResult>('/api/v1/backtests/run', {
     strategy: serializeStrategy(strategy),
-    config: {
-      initial_capital: config.initialCapital,
-      commission_bps: config.commissionBps,
-      slippage_bps: config.slippageBps,
-    },
+    config: serializeConfig(config),
     data: serializeData(data),
     bars,
   });
@@ -500,11 +554,7 @@ export const compileAndRunStrategy = async (
     backtest: ApiBacktestResult;
   }>('/api/v1/backtests/compile-and-run', {
     prompt,
-    config: {
-      initial_capital: config.initialCapital,
-      commission_bps: config.commissionBps,
-      slippage_bps: config.slippageBps,
-    },
+    config: serializeConfig(config),
     data: serializeData(data),
     bars,
   });

@@ -76,6 +76,7 @@ def persist_backtest(
             "benchmark_symbol": result.benchmark_symbol,
             "benchmark_return": result.benchmark_return,
             "excess_return": result.excess_return,
+            "relative_return": result.relative_return,
             "max_drawdown": result.max_drawdown,
             "sharpe_ratio": result.sharpe_ratio,
             "sortino_ratio": result.sortino_ratio,
@@ -88,7 +89,11 @@ def persist_backtest(
             "average_holding_days": result.average_holding_days,
             "total_commission": result.total_commission,
             "adjustment": result.adjustment,
-            "data_quality": result.data_quality.model_dump(mode="json"),
+            "data_quality": (
+                result.data_quality.model_dump(mode="json")
+                if result.data_quality
+                else None
+            ),
             "as_of": result.as_of,
         },
         bar_count=result.bars,

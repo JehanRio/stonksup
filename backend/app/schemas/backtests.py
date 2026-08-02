@@ -64,6 +64,7 @@ class BacktestConfig(BaseModel):
     initial_capital: float = Field(default=100_000, gt=0, le=1_000_000_000)
     commission_bps: float = Field(default=5, ge=0, le=1_000)
     slippage_bps: float = Field(default=5, ge=0, le=1_000)
+    risk_free_rate_percent: float = Field(default=0, ge=-20, le=30)
 
 
 class BacktestDataConfig(BaseModel):
@@ -124,11 +125,22 @@ class BacktestTrade(BaseModel):
 
 
 class DataQualityReport(BaseModel):
-    status: Literal["pass", "warn"]
+    status: Literal["pass", "warn", "fail"]
     adjustment: PriceAdjustment
+    requested_start: date
+    requested_end: date
+    actual_start: date
+    actual_end: date
+    benchmark_start: date
+    benchmark_end: date
+    coverage_ratio: float = Field(ge=0, le=1)
+    benchmark_coverage_ratio: float = Field(ge=0, le=1)
+    stale_trading_days: int = Field(ge=0)
     strategy_bars: int
     benchmark_bars: int
     aligned_bars: int
+    strategy_hash: str
+    benchmark_hash: str
     checks: list[str]
 
 
@@ -160,6 +172,7 @@ class BacktestResult(BaseModel):
     adjustment: PriceAdjustment = "none"
     asset_return: float = 0
     excess_return: float = 0
+    relative_return: float = 0
     annualized_volatility: float = 0
     sortino_ratio: float = 0
     calmar_ratio: float = 0
@@ -168,16 +181,7 @@ class BacktestResult(BaseModel):
     average_holding_days: float = 0
     total_commission: float = 0
     benchmark_curve: list[BenchmarkPoint] = Field(default_factory=list)
-    data_quality: DataQualityReport = Field(
-        default_factory=lambda: DataQualityReport(
-            status="warn",
-            adjustment="none",
-            strategy_bars=0,
-            benchmark_bars=0,
-            aligned_bars=0,
-            checks=["Data quality report was not generated."],
-        )
-    )
+    data_quality: DataQualityReport | None = None
 
 
 class CompileAndRunResult(BaseModel):

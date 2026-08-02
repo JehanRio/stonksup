@@ -24,6 +24,7 @@ import type {
   StrategyCompilation,
   StrategySpec,
 } from '../../../services/backtestApi';
+import '../../../styles/strategy-lab-phase3.css';
 
 
 const formatCurrency = (value: number, compact = false) =>
@@ -37,23 +38,55 @@ const formatCurrency = (value: number, compact = false) =>
 const formatPercent = (value: number) =>
   `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
 
+const formatPercentagePoints = (value: number) =>
+  `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)} pp`;
+
 const formatMetric = (value: number) =>
   Number.isFinite(value) ? value.toFixed(2) : '--';
 
-const resultMetrics = (result: BacktestResult) => [
-  { label: '累计收益', value: formatPercent(result.totalReturn), tone: result.totalReturn >= 0 ? 'positive' : 'negative' },
+const formatHash = (value: string) => value ? `${value.slice(0, 12)}...` : '--';
+
+const resultMetrics = (result: BacktestResult, riskFreeRatePercent: number) => [
   { label: '年化收益', value: formatPercent(result.annualizedReturn), tone: result.annualizedReturn >= 0 ? 'positive' : 'negative' },
-  { label: `超额收益 vs ${result.benchmarkSymbol}`, value: formatPercent(result.excessReturn), tone: result.excessReturn >= 0 ? 'positive' : 'negative' },
+  { label: `超额百分点 vs ${result.benchmarkSymbol}`, value: formatPercentagePoints(result.excessReturn), tone: result.excessReturn >= 0 ? 'positive' : 'negative' },
+  { label: `相对财富收益 vs ${result.benchmarkSymbol}`, value: formatPercent(result.relativeReturn), tone: result.relativeReturn >= 0 ? 'positive' : 'negative' },
   { label: '最大回撤', value: formatPercent(result.maxDrawdown), tone: 'negative' },
   { label: '年化波动率', value: formatPercent(result.annualizedVolatility), tone: 'neutral' },
-  { label: '夏普比率', value: formatMetric(result.sharpeRatio), tone: result.sharpeRatio >= 1 ? 'positive' : 'neutral' },
-  { label: 'Sortino', value: formatMetric(result.sortinoRatio), tone: result.sortinoRatio >= 1 ? 'positive' : 'neutral' },
+  { label: `夏普 (Rf ${riskFreeRatePercent.toFixed(1)}%)`, value: formatMetric(result.sharpeRatio), tone: result.sharpeRatio >= 1 ? 'positive' : 'neutral' },
+  { label: `Sortino (Rf ${riskFreeRatePercent.toFixed(1)}%)`, value: formatMetric(result.sortinoRatio), tone: result.sortinoRatio >= 1 ? 'positive' : 'neutral' },
   { label: 'Calmar', value: formatMetric(result.calmarRatio), tone: result.calmarRatio >= 1 ? 'positive' : 'neutral' },
-  { label: '年化 Alpha', value: formatPercent(result.alpha), tone: result.alpha >= 0 ? 'positive' : 'negative' },
+  { label: `年化 Alpha (Rf ${riskFreeRatePercent.toFixed(1)}%)`, value: formatPercent(result.alpha), tone: result.alpha >= 0 ? 'positive' : 'negative' },
   { label: 'Beta', value: formatMetric(result.beta), tone: 'neutral' },
   { label: '胜率', value: formatPercent(result.winRate), tone: 'neutral' },
   { label: '交易次数', value: String(result.tradeCount), tone: 'neutral' },
 ];
+
+const describeStrategy = (strategy: StrategySpec): string[] => {
+  const entryExit = {
+    ema_pullback: [
+      `收盘确认价格触及 EMA${strategy.emaPeriod}（容差 ${strategy.touchToleranceBps} bps）后，于下一交易日开盘买入。`,
+      `收盘跌破 EMA${strategy.emaPeriod} 后，于下一交易日开盘卖出。`,
+    ],
+    ma_crossover: [
+      `快线 MA${strategy.fastPeriod} 上穿慢线 MA${strategy.slowPeriod} 后，于下一交易日开盘买入。`,
+      `快线下穿慢线后，于下一交易日开盘卖出。`,
+    ],
+    momentum_breakout: [
+      `收盘突破过去 ${strategy.lookbackPeriod} 个交易日高点后，于下一交易日开盘买入。`,
+      `跌破策略退出条件后，于下一交易日开盘卖出。`,
+    ],
+    rsi_mean_reversion: [
+      `RSI(${strategy.rsiPeriod}) 低于 ${strategy.rsiEntry} 后，于下一交易日开盘买入。`,
+      `RSI(${strategy.rsiPeriod}) 高于 ${strategy.rsiExit} 后，于下一交易日开盘卖出。`,
+    ],
+  }[strategy.kind];
+
+  return [
+    ...entryExit,
+    `每次最多使用 ${strategy.allocationPercent}% 可用资金；保护止损为 ${strategy.stopLossPercent}%。`,
+    '仅做多；信号在收盘生成，成交使用下一交易日开盘价。',
+  ];
+};
 
 const EquityTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
@@ -75,6 +108,7 @@ type Props = {
   result: BacktestResult | null;
   definition: StrategySpec;
   compilation: StrategyCompilation | null;
+  riskFreeRatePercent: number;
 };
 
 
@@ -83,14 +117,26 @@ const StrategyResultPanel: React.FC<Props> = ({
   result,
   definition,
   compilation,
+  riskFreeRatePercent,
 }) => {
-  const metrics = useMemo(() => (result ? resultMetrics(result) : []), [result]);
+  const metrics = useMemo(
+    () => result ? resultMetrics(result, riskFreeRatePercent) : [],
+    [result, riskFreeRatePercent],
+  );
+  const currentRules = compilation?.interpretation ?? describeStrategy(definition);
   const statusLabel = {
     loading: 'CONNECTING ENGINE',
     ready: 'READY TO RUN',
     running: 'RUNNING',
     complete: 'RUN COMPLETE',
     error: 'RUN FAILED',
+  }[status];
+  const emptyCopy = {
+    loading: ['正在初始化回测引擎', '正在读取数据能力与策略编译器状态。'],
+    ready: ['配置已就绪', '点击“运行回测”后，这里会显示净值、风险指标、数据质量和交易明细。'],
+    running: ['正在运行回测', '系统正在补齐行情、校验数据并执行确定性回测。'],
+    complete: ['运行已完成', '结果加载中。'],
+    error: ['本次运行未完成', '请根据上方错误信息修正配置后重新运行。'],
   }[status];
 
   return (
@@ -102,14 +148,18 @@ const StrategyResultPanel: React.FC<Props> = ({
         </span>
         <span>{result?.runId ?? 'WAITING FOR RUN'}</span>
         <span>{result ? `${result.bars} daily bars` : definition.kind}</span>
-        <span>{result ? `as of ${result.asOf}` : 'next-open execution'}</span>
+        <span>
+          {result
+            ? `${result.dataQuality.actualStart} to ${result.dataQuality.actualEnd}`
+            : 'next-open execution'}
+        </span>
       </div>
 
       {!result ? (
         <div className="strategy-empty-result">
           <FlaskConical size={28} />
-          <strong>正在连接确定性回测引擎</strong>
-          <span>运行后将在这里显示三条净值曲线、风险指标、审计和交易明细。</span>
+          <strong>{emptyCopy[0]}</strong>
+          <span>{emptyCopy[1]}</span>
         </div>
       ) : (
         <>
@@ -142,13 +192,13 @@ const StrategyResultPanel: React.FC<Props> = ({
               </strong>
             </div>
             <div>
-              <span>{result.benchmarkSymbol} 基准</span>
+              <span>{result.benchmarkSymbol} 独立基准</span>
               <strong className={result.benchmarkReturn >= 0 ? 'positive' : 'negative'}>
                 {formatPercent(result.benchmarkReturn)}
               </strong>
             </div>
             <div>
-              <span>平均持仓 / 佣金</span>
+              <span>平均持仓日历日 / 佣金</span>
               <strong>{result.averageHoldingDays.toFixed(1)}d / {formatCurrency(result.totalCommission)}</strong>
             </div>
           </div>
@@ -162,20 +212,48 @@ const StrategyResultPanel: React.FC<Props> = ({
             ))}
           </div>
 
-          <section className={`strategy-data-quality is-${result.dataQuality.status}`}>
-            <div>
+          <section className={`strategy-data-quality phase3 is-${result.dataQuality.status}`}>
+            <div className="strategy-quality-summary">
               <span>DATA QUALITY</span>
               <strong>{result.dataQuality.status.toUpperCase()}</strong>
               <small>
                 {result.adjustment === 'all' ? 'FULLY ADJUSTED' : result.adjustment.toUpperCase()}
               </small>
             </div>
-            <div className="strategy-quality-counts">
-              <span>Asset <strong>{result.dataQuality.strategyBars}</strong></span>
-              <span>Benchmark <strong>{result.dataQuality.benchmarkBars}</strong></span>
-              <span>Aligned <strong>{result.dataQuality.alignedBars}</strong></span>
-            </div>
-            <ul>
+
+            <dl className="strategy-quality-ledger">
+              <div>
+                <dt>请求区间</dt>
+                <dd>{result.dataQuality.requestedStart} - {result.dataQuality.requestedEnd}</dd>
+              </div>
+              <div>
+                <dt>{result.symbol} 实际区间</dt>
+                <dd>{result.dataQuality.actualStart} - {result.dataQuality.actualEnd}</dd>
+              </div>
+              <div>
+                <dt>{result.benchmarkSymbol} 实际区间</dt>
+                <dd>{result.dataQuality.benchmarkStart} - {result.dataQuality.benchmarkEnd}</dd>
+              </div>
+              <div>
+                <dt>覆盖率 / 新鲜度</dt>
+                <dd>
+                  {(result.dataQuality.coverageRatio * 100).toFixed(1)}% / {' '}
+                  {result.dataQuality.staleTradingDays} 个交易日延迟
+                </dd>
+              </div>
+              <div>
+                <dt>Bars</dt>
+                <dd>{result.dataQuality.strategyBars} / {result.dataQuality.benchmarkBars} / {result.dataQuality.alignedBars} aligned</dd>
+              </div>
+              <div>
+                <dt>OHLCV 指纹</dt>
+                <dd title={`${result.symbol}: ${result.dataQuality.strategyHash}\n${result.benchmarkSymbol}: ${result.dataQuality.benchmarkHash}`}>
+                  {formatHash(result.dataQuality.strategyHash)} / {formatHash(result.dataQuality.benchmarkHash)}
+                </dd>
+              </div>
+            </dl>
+
+            <ul className="strategy-quality-checks">
               {result.dataQuality.checks.map((check) => (
                 <li key={check}>{check}</li>
               ))}
@@ -203,7 +281,7 @@ const StrategyResultPanel: React.FC<Props> = ({
                   <Tooltip content={<EquityTooltip />} />
                   <Line type="monotone" dataKey="strategy" name="Strategy" stroke="#4d8dff" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                   <Line type="monotone" dataKey="asset" name={`${result.symbol} Buy & Hold`} stroke="#73808a" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
-                  <Line type="monotone" dataKey="benchmark" name={result.benchmarkSymbol} stroke="#e7b84b" strokeWidth={1.6} strokeDasharray="2 5" dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="benchmark" name={result.benchmarkSymbol} stroke="#e7b84b" strokeWidth={1.6} strokeDasharray="2 5" dot={false} connectNulls={false} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -212,11 +290,11 @@ const StrategyResultPanel: React.FC<Props> = ({
           <div className="strategy-audit-grid">
             <section className="strategy-audit-section">
               <div className="strategy-result-heading">
-                <div><span>05 / COMPILED CONTRACT</span><h3>AI 规则解释</h3></div>
+                <div><span>05 / COMPILED CONTRACT</span><h3>{compilation ? 'AI 规则解释' : '当前结构化规则'}</h3></div>
                 <Braces size={20} />
               </div>
               <ol className="strategy-rule-list">
-                {(compilation?.interpretation ?? []).map((rule, index) => (
+                {currentRules.map((rule, index) => (
                   <li key={`${index}-${rule}`}><span>{String(index + 1).padStart(2, '0')}</span><p>{rule}</p></li>
                 ))}
               </ol>

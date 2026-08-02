@@ -10,8 +10,8 @@ import '../../../styles/strategy-lab-phase2.css';
 import '../../../styles/strategy-lab-phase2-mobile.css';
 
 
-const formatPercent = (value: number) =>
-  `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
+const formatPercentagePoints = (value: number) =>
+  `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)} pp`;
 
 
 type Props = {
@@ -35,7 +35,12 @@ const StrategyDataConsole: React.FC<Props> = ({
 }) => {
   const realReady = Boolean(capability?.configured);
   const benchmarkOptions = Array.from(
-    new Set(['SPY', 'QQQ', assetSymbol.toUpperCase()]),
+    new Set([
+      'SPY',
+      'QQQ',
+      config.benchmarkSymbol.toUpperCase(),
+      assetSymbol.toUpperCase(),
+    ]),
   );
 
   return (
@@ -45,7 +50,7 @@ const StrategyDataConsole: React.FC<Props> = ({
           <span><Database size={17} /> DATASET</span>
           <strong>{config.mode === 'real' ? '真实复权日线' : '确定性演示行情'}</strong>
           <small className={realReady ? 'is-ready' : 'is-missing'}>
-            {realReady ? 'Twelve Data 已连接' : '真实数据密钥未配置'}
+            {realReady ? 'Twelve Data API Key 已配置' : '真实数据密钥未配置'}
           </small>
         </div>
 
@@ -62,7 +67,7 @@ const StrategyDataConsole: React.FC<Props> = ({
             className={config.mode === 'real' ? 'is-active' : ''}
             onClick={() => onChange('mode', 'real')}
             disabled={!realReady}
-            title={realReady ? '使用真实行情' : '服务器需要配置 Twelve Data API Key'}
+            title={realReady ? '连接状态将在拉取行情时验证' : '服务器需要配置 Twelve Data API Key'}
           >
             真实
           </button>
@@ -85,7 +90,10 @@ const StrategyDataConsole: React.FC<Props> = ({
         </label>
 
         <label className="strategy-date-field">
-          <span><CalendarDays size={14} /> 起始日期</span>
+          <span>
+            <CalendarDays size={14} />
+            {config.mode === 'demo' ? '起始日期（仅真实模式）' : '起始日期'}
+          </span>
           <input
             type="date"
             value={config.startDate}
@@ -95,7 +103,10 @@ const StrategyDataConsole: React.FC<Props> = ({
         </label>
 
         <label className="strategy-date-field">
-          <span><CalendarDays size={14} /> 结束日期</span>
+          <span>
+            <CalendarDays size={14} />
+            {config.mode === 'demo' ? '结束日期（仅真实模式）' : '结束日期'}
+          </span>
           <input
             type="date"
             value={config.endDate}
@@ -110,14 +121,17 @@ const StrategyDataConsole: React.FC<Props> = ({
           <small>{config.mode === 'real' ? '拆股 + 分红复权' : '仅用于体验流程'}</small>
         </div>
 
-        <label className="strategy-refresh-toggle">
+        <label
+          className="strategy-refresh-toggle"
+          title="仅本次运行覆盖重拉所选区间；平时会自动补齐缺失日期"
+        >
           <input
             type="checkbox"
             checked={config.refresh}
             disabled={config.mode === 'demo'}
             onChange={(event) => onChange('refresh', event.target.checked)}
           />
-          <span>运行前刷新</span>
+          <span>本次强制重拉</span>
         </label>
       </section>
 
@@ -135,10 +149,10 @@ const StrategyDataConsole: React.FC<Props> = ({
                   <span>vs {run.benchmarkSymbol}</span>
                 </div>
                 <b className={run.excessReturn >= 0 ? 'positive' : 'negative'}>
-                  {formatPercent(run.excessReturn)}
+                  {formatPercentagePoints(run.excessReturn)}
                 </b>
                 <small>
-                  超额 / {run.barCount} bars / {run.adjustment}
+                  超额百分点 / {run.barCount} bars / {run.adjustment}
                 </small>
               </article>
             ))}

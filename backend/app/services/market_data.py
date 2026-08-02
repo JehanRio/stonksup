@@ -71,7 +71,6 @@ class TwelveDataClient:
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "order": "ASC",
-                "outputsize": 5000,
                 "format": "JSON",
                 "adjust": adjustment,
             },

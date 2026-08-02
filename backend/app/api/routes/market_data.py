@@ -39,7 +39,7 @@ def get_market_data_capabilities(
             maximum_points_per_request=5_000,
             storage=storage,
             message=(
-                "Real daily market data is ready."
+                "The API key is configured; connectivity is verified during sync."
                 if configured
                 else "Add STONKSUP_TWELVE_DATA_API_KEY to enable real daily market data."
             ),

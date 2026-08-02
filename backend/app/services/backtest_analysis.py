@@ -49,6 +49,7 @@ def _aligned_benchmark_curve(
 def _alpha_beta(
     strategy_returns: list[float],
     benchmark_returns: list[float],
+    daily_risk_free: float,
 ) -> tuple[float, float]:
     count = min(len(strategy_returns), len(benchmark_returns))
     if count < 2:
@@ -68,8 +69,12 @@ def _alpha_beta(
         for index in range(count)
     ) / count
     beta = covariance / benchmark_variance
-    alpha = (strategy_mean - beta * benchmark_mean) * 252
-    return alpha, beta
+    daily_alpha = (
+        strategy_mean
+        - daily_risk_free
+        - beta * (benchmark_mean - daily_risk_free)
+    )
+    return daily_alpha * 252, beta
 
 
 def enrich_backtest_result(
@@ -82,16 +87,27 @@ def enrich_backtest_result(
     benchmark_values = [point.value for point in benchmark_curve]
     strategy_returns = _daily_returns(strategy_values)
     benchmark_returns = _daily_returns(benchmark_values)
+    annual_risk_free = config.risk_free_rate_percent / 100
+    daily_risk_free = (1 + annual_risk_free) ** (1 / 252) - 1
+    excess_daily_returns = [value - daily_risk_free for value in strategy_returns]
 
     annualized_volatility = (
         stdev(strategy_returns) * math.sqrt(252)
         if len(strategy_returns) > 1
         else 0
     )
-    downside = [min(value, 0) for value in strategy_returns]
-    downside_deviation = stdev(downside) if len(downside) > 1 else 0
+    sharpe = (
+        mean(excess_daily_returns) / stdev(strategy_returns) * math.sqrt(252)
+        if len(strategy_returns) > 1 and stdev(strategy_returns)
+        else 0
+    )
+    downside_deviation = (
+        math.sqrt(mean(min(value, 0) ** 2 for value in excess_daily_returns))
+        if excess_daily_returns
+        else 0
+    )
     sortino = (
-        mean(strategy_returns) / downside_deviation * math.sqrt(252)
+        mean(excess_daily_returns) / downside_deviation * math.sqrt(252)
         if downside_deviation
         else 0
     )
@@ -100,10 +116,19 @@ def enrich_backtest_result(
         if result.max_drawdown
         else 0
     )
-    alpha, beta = _alpha_beta(strategy_returns, benchmark_returns)
+    alpha, beta = _alpha_beta(
+        strategy_returns,
+        benchmark_returns,
+        daily_risk_free,
+    )
     benchmark_return = (
         benchmark_values[-1] / benchmark_values[0] - 1
         if len(benchmark_values) > 1 and benchmark_values[0]
+        else 0
+    )
+    relative_return = (
+        (1 + result.total_return) / (1 + benchmark_return) - 1
+        if benchmark_return > -1
         else 0
     )
     holding_days = [
@@ -132,7 +157,9 @@ def enrich_backtest_result(
             "asset_return": asset_return,
             "benchmark_return": benchmark_return,
             "excess_return": result.total_return - benchmark_return,
+            "relative_return": relative_return,
             "annualized_volatility": annualized_volatility,
+            "sharpe_ratio": sharpe,
             "sortino_ratio": sortino,
             "calmar_ratio": calmar,
             "alpha": alpha,
@@ -141,5 +168,12 @@ def enrich_backtest_result(
             "total_commission": round(total_commission, 2),
             "benchmark_curve": benchmark_curve,
             "data_quality": loaded.quality,
+            "assumptions": [
+                *result.assumptions[:3],
+                (
+                    "Risk metrics use an annual risk-free rate of "
+                    f"{config.risk_free_rate_percent:g}%."
+                ),
+            ],
         }
     )
