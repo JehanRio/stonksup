@@ -151,6 +151,11 @@ class Strategy(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    walk_forward_experiments: Mapped[list[WalkForwardExperiment]] = relationship(
+        back_populates="strategy",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class BacktestRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -213,3 +218,115 @@ class BacktestTrade(UUIDPrimaryKeyMixin, Base):
     exit_reason: Mapped[str | None] = mapped_column(String(48))
 
     run: Mapped[BacktestRun] = relationship(back_populates="trades")
+
+
+class WalkForwardExperiment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "walk_forward_experiments"
+    __table_args__ = (
+        UniqueConstraint("experiment_key", name="uq_walk_forward_experiments_key"),
+        Index("ix_walk_forward_experiments_strategy_status", "strategy_id", "status"),
+    )
+
+    strategy_id: Mapped[UUID] = mapped_column(
+        ForeignKey("strategies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    experiment_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="completed",
+        server_default="completed",
+    )
+    objective: Mapped[str] = mapped_column(String(32), nullable=False)
+    primary_parameter: Mapped[str] = mapped_column(String(48), nullable=False)
+    data_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    window_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    strategy: Mapped[Strategy] = relationship(back_populates="walk_forward_experiments")
+    windows: Mapped[list[WalkForwardWindow]] = relationship(
+        back_populates="experiment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="WalkForwardWindow.sequence",
+    )
+
+
+class WalkForwardWindow(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "walk_forward_windows"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "sequence",
+            name="uq_walk_forward_windows_experiment_sequence",
+        ),
+    )
+
+    experiment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("walk_forward_experiments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    train_start: Mapped[date] = mapped_column(nullable=False)
+    train_end: Mapped[date] = mapped_column(nullable=False)
+    test_start: Mapped[date] = mapped_column(nullable=False)
+    test_end: Mapped[date] = mapped_column(nullable=False)
+    selected_parameters: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+    train_metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    test_metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    objective_score: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    robust_score: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    eligible_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    used_fallback: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
+    experiment: Mapped[WalkForwardExperiment] = relationship(back_populates="windows")
+    trials: Mapped[list[WalkForwardTrial]] = relationship(
+        back_populates="window",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class WalkForwardTrial(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "walk_forward_trials"
+    __table_args__ = (
+        UniqueConstraint(
+            "window_id",
+            "period",
+            "stop_loss",
+            name="uq_walk_forward_trials_window_parameters",
+        ),
+        Index("ix_walk_forward_trials_window_selected", "window_id", "selected"),
+    )
+
+    window_id: Mapped[UUID] = mapped_column(
+        ForeignKey("walk_forward_windows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period: Mapped[int] = mapped_column(Integer, nullable=False)
+    stop_loss: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    objective_score: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    robust_score: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    window: Mapped[WalkForwardWindow] = relationship(back_populates="trials")

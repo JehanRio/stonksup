@@ -452,7 +452,7 @@ const StrategyResultPanel: React.FC<Props> = ({
 
           <footer className="strategy-next-step">
             <FlaskConical size={20} />
-            <span>下一步将加入训练集、测试集和 Walk-forward 窗口，检查策略是否存在参数过拟合。</span>
+            <span>这是完整区间单次回测；样本外稳定性请切换到 Walk-forward 验证。</span>
           </footer>
         </>
       )}

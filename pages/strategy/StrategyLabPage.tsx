@@ -26,11 +26,18 @@ import {
   type StrategyKind,
   type StrategySpec,
 } from '../../services/backtestApi';
+import {
+  runWalkForward,
+  type WalkForwardConfig,
+  type WalkForwardResult,
+} from '../../services/walkForwardApi';
 import StrategyDataConsole from './components/StrategyDataConsole';
 import StrategyResultPanel from './components/StrategyResultPanel';
+import WalkForwardResultPanel from './components/WalkForwardResultPanel';
 import '../../styles/strategy-lab.css';
 import '../../styles/strategy-lab-api.css';
 import '../../styles/strategy-lab-data.css';
+import '../../styles/strategy-lab-walk-forward.css';
 
 
 const INITIAL_PROMPT =
@@ -46,6 +53,21 @@ const DEFAULT_CONFIG: BacktestConfig = {
   commissionBps: 5,
   slippageBps: 5,
   riskFreeRatePercent: 0,
+};
+
+const DEFAULT_WALK_FORWARD: WalkForwardConfig = {
+  trainBars: 252,
+  testBars: 63,
+  search: {
+    periodMin: 3,
+    periodMax: 15,
+    periodStep: 1,
+    stopLossMin: 5,
+    stopLossMax: 10,
+    stopLossStep: 1,
+    minimumTrades: 3,
+    objective: 'calmar',
+  },
 };
 
 const DEFAULT_DATA: BacktestDataConfig = {
@@ -156,6 +178,7 @@ const NumericField: React.FC<{
 
 
 type RunStatus = 'loading' | 'ready' | 'running' | 'complete' | 'error';
+type ValidationMode = 'backtest' | 'walk_forward';
 
 
 const StrategyLabPage: React.FC = () => {
@@ -167,6 +190,9 @@ const StrategyLabPage: React.FC = () => {
   const [capability, setCapability] = useState<MarketDataCapability | null>(null);
   const [history, setHistory] = useState<BacktestRunSummary[]>([]);
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [walkForwardResult, setWalkForwardResult] = useState<WalkForwardResult | null>(null);
+  const [validationMode, setValidationMode] = useState<ValidationMode>('backtest');
+  const [walkForwardConfig, setWalkForwardConfig] = useState<WalkForwardConfig>(DEFAULT_WALK_FORWARD);
   const [status, setStatus] = useState<RunStatus>('loading');
   const [promptDirty, setPromptDirty] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -181,6 +207,7 @@ const StrategyLabPage: React.FC = () => {
 
   const invalidateResult = () => {
     setResult(null);
+    setWalkForwardResult(null);
     setErrorMessage('');
     setStatus('ready');
   };
@@ -257,11 +284,31 @@ const StrategyLabPage: React.FC = () => {
     invalidateResult();
   };
 
+  const updateValidation = <Key extends keyof WalkForwardConfig>(
+    key: Key,
+    value: WalkForwardConfig[Key],
+  ) => {
+    setWalkForwardConfig((current) => ({ ...current, [key]: value }));
+    invalidateResult();
+  };
+
+  const updateSearch = <Key extends keyof WalkForwardConfig['search']>(
+    key: Key,
+    value: WalkForwardConfig['search'][Key],
+  ) => {
+    setWalkForwardConfig((current) => ({
+      ...current,
+      search: { ...current.search, [key]: value },
+    }));
+    invalidateResult();
+  };
+
   const applyTemplate = async (kind: StrategyKind) => {
     const template = templates.find((item) => item.kind === kind);
     if (!template) return;
     setPrompt(template.prompt);
     setResult(null);
+    setWalkForwardResult(null);
     setStatus('running');
     setErrorMessage('');
     try {
@@ -278,6 +325,7 @@ const StrategyLabPage: React.FC = () => {
 
   const handleCompile = async () => {
     setResult(null);
+    setWalkForwardResult(null);
     setStatus('running');
     setErrorMessage('');
     try {
@@ -295,10 +343,23 @@ const StrategyLabPage: React.FC = () => {
   const handleRun = async () => {
     const runData = dataConfig;
     setResult(null);
+    setWalkForwardResult(null);
     setStatus('running');
     setErrorMessage('');
     try {
-      if (promptDirty) {
+      if (validationMode === 'walk_forward') {
+        let runDefinition = definition;
+        if (promptDirty) {
+          const nextCompilation = await compileStrategy(prompt);
+          setCompilation(nextCompilation);
+          setDefinition(nextCompilation.strategy);
+          setPromptDirty(false);
+          runDefinition = nextCompilation.strategy;
+        }
+        setWalkForwardResult(
+          await runWalkForward(runDefinition, config, runData, walkForwardConfig),
+        );
+      } else if (promptDirty) {
         const response = await compileAndRunStrategy(prompt, config, runData);
         setCompilation(response.compilation);
         setDefinition(response.compilation.strategy);
@@ -308,10 +369,10 @@ const StrategyLabPage: React.FC = () => {
         setResult(await runStrategy(definition, config, runData));
       }
       setStatus('complete');
-      await refreshHistory();
+      if (validationMode === 'backtest') await refreshHistory();
     } catch (error) {
       setStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : '回测运行失败');
+      setErrorMessage(error instanceof Error ? error.message : '验证运行失败');
     } finally {
       if (runData.refresh) {
         setDataConfig((current) => ({ ...current, refresh: false }));
@@ -323,11 +384,37 @@ const StrategyLabPage: React.FC = () => {
     <div className="strategy-lab-page">
       <header className="strategy-lab-header">
         <div>
-          <span className="strategy-eyebrow">STRATEGY / RELATIVE BACKTEST</span>
+          <span className="strategy-eyebrow">
+            {validationMode === 'walk_forward' ? 'STRATEGY / OUT-OF-SAMPLE' : 'STRATEGY / RELATIVE BACKTEST'}
+          </span>
           <h1>策略实验室</h1>
           <p>使用完整复权区间、独立基准和可复现数据指纹，判断策略是否真正创造超额收益。</p>
         </div>
         <div className="strategy-header-actions">
+          <div className="strategy-mode-switch" role="group" aria-label="验证模式">
+            <button
+              type="button"
+              className={validationMode === 'backtest' ? 'is-active' : ''}
+              onClick={() => {
+                setValidationMode('backtest');
+                invalidateResult();
+              }}
+              disabled={busy}
+            >
+              单次回测
+            </button>
+            <button
+              type="button"
+              className={validationMode === 'walk_forward' ? 'is-active' : ''}
+              onClick={() => {
+                setValidationMode('walk_forward');
+                invalidateResult();
+              }}
+              disabled={busy}
+            >
+              样本外验证
+            </button>
+          </div>
           <span className={`strategy-data-badge ${dataConfig.mode === 'real' ? 'is-real' : ''}`}>
             <Database size={17} />
             {dataConfig.mode === 'real' ? 'ADJUSTED DATA' : 'DEMO DATA'}
@@ -339,7 +426,11 @@ const StrategyLabPage: React.FC = () => {
             disabled={busy}
           >
             {busy ? <RefreshCw size={18} /> : <Play size={18} fill="currentColor" />}
-            {busy ? '正在处理' : '运行回测'}
+            {busy
+              ? '正在处理'
+              : validationMode === 'walk_forward'
+                ? '运行样本外验证'
+                : '运行回测'}
           </button>
         </div>
       </header>
@@ -482,15 +573,53 @@ const StrategyLabPage: React.FC = () => {
               <NumericField label="无风险利率" value={config.riskFreeRatePercent} suffix="%/年" min={-20} max={30} step={0.1} onChange={(value) => updateConfig('riskFreeRatePercent', value)} />
             </div>
           </section>
+
+          {validationMode === 'walk_forward' && (
+            <section className="strategy-builder-section">
+              <div className="strategy-section-heading">
+                <span>04</span>
+                <div>
+                  <h2>样本外验证</h2>
+                  <p>每个测试期只使用此前参数选择期确定的规则。</p>
+                </div>
+              </div>
+              <div className="strategy-validation-fields">
+                <NumericField label="参数选择期" value={walkForwardConfig.trainBars} suffix="bars" min={120} max={2500} onChange={(value) => updateValidation('trainBars', value)} />
+                <NumericField label="单个测试期" value={walkForwardConfig.testBars} suffix="bars" min={20} max={504} onChange={(value) => updateValidation('testBars', value)} />
+                <NumericField label="周期下限" value={walkForwardConfig.search.periodMin} min={2} max={250} onChange={(value) => updateSearch('periodMin', value)} />
+                <NumericField label="周期上限" value={walkForwardConfig.search.periodMax} min={2} max={250} onChange={(value) => updateSearch('periodMax', value)} />
+                <NumericField label="周期步长" value={walkForwardConfig.search.periodStep} min={1} max={50} onChange={(value) => updateSearch('periodStep', value)} />
+                <NumericField label="最低交易数" value={walkForwardConfig.search.minimumTrades} min={0} max={1000} onChange={(value) => updateSearch('minimumTrades', value)} />
+                <NumericField label="止损下限" value={walkForwardConfig.search.stopLossMin} suffix="%" min={0} max={50} step={0.5} onChange={(value) => updateSearch('stopLossMin', value)} />
+                <NumericField label="止损上限" value={walkForwardConfig.search.stopLossMax} suffix="%" min={0} max={50} step={0.5} onChange={(value) => updateSearch('stopLossMax', value)} />
+                <NumericField label="止损步长" value={walkForwardConfig.search.stopLossStep} suffix="%" min={0.1} max={10} step={0.1} onChange={(value) => updateSearch('stopLossStep', value)} />
+                <label className="strategy-objective-field">
+                  <span>参数选择目标</span>
+                  <select
+                    value={walkForwardConfig.search.objective}
+                    onChange={(event) => updateSearch('objective', event.target.value as WalkForwardConfig['search']['objective'])}
+                  >
+                    <option value="calmar">Calmar 收益回撤比</option>
+                    <option value="sharpe">Sharpe 风险调整收益</option>
+                    <option value="annualized_return">年化收益</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+          )}
         </aside>
 
-        <StrategyResultPanel
-          status={status}
-          result={result}
-          definition={definition}
-          compilation={compilation}
-          riskFreeRatePercent={config.riskFreeRatePercent}
-        />
+        {validationMode === 'walk_forward' ? (
+          <WalkForwardResultPanel status={status} result={walkForwardResult} />
+        ) : (
+          <StrategyResultPanel
+            status={status}
+            result={result}
+            definition={definition}
+            compilation={compilation}
+            riskFreeRatePercent={config.riskFreeRatePercent}
+          />
+        )}
       </div>
     </div>
   );

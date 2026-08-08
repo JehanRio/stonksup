@@ -12,6 +12,9 @@ EXPECTED_TABLES = {
     "strategies",
     "backtest_runs",
     "backtest_trades",
+    "walk_forward_experiments",
+    "walk_forward_windows",
+    "walk_forward_trials",
 }
 
 

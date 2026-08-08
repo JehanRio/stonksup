@@ -180,9 +180,24 @@ def run_backtest(
     rows: list[Bar],
     strategy: StrategySpec,
     config: BacktestConfig,
+    *,
+    trade_start_date: date | None = None,
 ) -> BacktestResult:
     if len(rows) < 120:
         raise ValueError("Backtest requires at least 120 daily bars")
+
+    evaluation_start_index = 0
+    if trade_start_date is not None:
+        evaluation_start_index = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if row.trading_date >= trade_start_date
+            ),
+            -1,
+        )
+        if evaluation_start_index < 0 or len(rows) - evaluation_start_index < 2:
+            raise ValueError("Backtest evaluation window requires at least two bars")
 
     commission_rate = config.commission_bps / 10_000
     slippage_rate = config.slippage_bps / 10_000
@@ -197,7 +212,7 @@ def run_backtest(
     pending: PendingOrder | None = None
     trades: list[BacktestTrade] = []
     equity_curve: list[EquityPoint] = []
-    first_close = rows[0].close
+    first_close = rows[evaluation_start_index].close
     peak_equity = config.initial_capital
 
     def close_position(row: Bar, raw_price: float, reason: str) -> None:
@@ -231,6 +246,9 @@ def run_backtest(
         position = Position()
 
     for index, row in enumerate(rows):
+        if index < evaluation_start_index:
+            continue
+
         if pending and pending.side == "buy" and position.quantity == 0:
             execution_price = row.open * (1 + slippage_rate)
             budget = cash * strategy.allocation_percent / 100
@@ -343,7 +361,7 @@ def run_backtest(
 
     final_equity = equity_curve[-1].strategy
     total_return = final_equity / config.initial_capital - 1
-    years = max((len(rows) - 1) / 252, 1 / 252)
+    years = max((len(equity_curve) - 1) / 252, 1 / 252)
     annualized_return = (
         max(final_equity / config.initial_capital, 0.0001) ** (1 / years) - 1
     )
@@ -362,10 +380,10 @@ def run_backtest(
     )
 
     return BacktestResult(
-        run_id=f"BT-{_strategy_hash(strategy, config, rows[0].trading_date, last_row.trading_date)}",
+        run_id=f"BT-{_strategy_hash(strategy, config, rows[evaluation_start_index].trading_date, last_row.trading_date)}",
         symbol=strategy.symbol,
         strategy_name=strategy.name,
-        bars=len(rows),
+        bars=len(equity_curve),
         as_of=last_row.trading_date.isoformat(),
         data_source=DATA_SOURCE,
         engine=ENGINE_NAME,
@@ -389,6 +407,12 @@ def run_backtest(
                 f"slippage {config.slippage_bps:g} bps per side."
             ),
             "Signals use completed close data and execute at the next session open.",
+            (
+                "Pre-window bars are indicator warm-up only; trading starts at "
+                f"{rows[evaluation_start_index].trading_date.isoformat()}."
+                if trade_start_date is not None
+                else "The complete input interval is eligible for trading."
+            ),
             "Seeded demo data is deterministic and must not be treated as investable evidence.",
         ],
         audit=[

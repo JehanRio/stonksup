@@ -7,6 +7,7 @@ from app.api.dependencies import (
     success_response,
 )
 from app.core.config import Settings
+from app.core.errors import StonksUpError
 from app.schemas.backtests import (
     BacktestResult,
     BacktestRunHistory,
@@ -17,6 +18,7 @@ from app.schemas.backtests import (
     StrategyCompilation,
 )
 from app.schemas.common import ApiResponse
+from app.schemas.walk_forward import RunWalkForwardRequest, WalkForwardResult
 from app.services.backtest_analysis import enrich_backtest_result
 from app.services.backtest_data import apply_data_provenance, load_backtest_data
 from app.services.backtest_engine import run_backtest
@@ -25,6 +27,8 @@ from app.services.backtest_persistence import (
     persist_backtest,
 )
 from app.services.strategy_compiler import compile_strategy
+from app.services.walk_forward import run_walk_forward
+from app.services.walk_forward_persistence import persist_walk_forward
 
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
@@ -92,6 +96,45 @@ def run_compiled_strategy(
         result=result,
     )
     return success_response(request, result)
+
+
+@router.post("/walk-forward", response_model=ApiResponse[WalkForwardResult])
+def run_walk_forward_validation(
+    payload: RunWalkForwardRequest,
+    request: Request,
+    settings: Settings = Depends(get_app_settings),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[WalkForwardResult]:
+    loaded = load_backtest_data(
+        session,
+        settings,
+        payload.strategy,
+        payload.data,
+        payload.bars,
+    )
+    try:
+        execution = run_walk_forward(
+            loaded,
+            payload.strategy,
+            payload.config,
+            payload.validation,
+        )
+    except ValueError as exc:
+        raise StonksUpError(
+            "invalid_walk_forward",
+            str(exc),
+            status_code=422,
+        ) from exc
+    persist_walk_forward(
+        session,
+        prompt=payload.strategy.name,
+        strategy_spec=payload.strategy,
+        config=payload.config,
+        data=payload.data,
+        validation=payload.validation,
+        execution=execution,
+    )
+    return success_response(request, execution.result)
 
 
 @router.post("/compile-and-run", response_model=ApiResponse[CompileAndRunResult])
