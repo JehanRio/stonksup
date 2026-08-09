@@ -391,7 +391,7 @@ const StrategyLabPage: React.FC = () => {
           <p>使用完整复权区间、独立基准和可复现数据指纹，判断策略是否真正创造超额收益。</p>
         </div>
         <div className="strategy-header-actions">
-          <div className="strategy-mode-switch" role="group" aria-label="验证模式">
+          <div className="strategy-validation-switch" role="group" aria-label="验证模式">
             <button
               type="button"
               className={validationMode === 'backtest' ? 'is-active' : ''}
