@@ -39,6 +39,12 @@ class LoadedBacktestData:
     audit: list[str]
 
 
+@dataclass(frozen=True)
+class _LoadedRealSymbol:
+    rows: list[Bar]
+    refresh_warnings: list[str]
+
+
 def _to_engine_bars(rows) -> list[Bar]:
     return [
         Bar(
@@ -260,7 +266,7 @@ def _load_real_symbol(
     *,
     symbol: str,
     data: BacktestDataConfig,
-) -> list[Bar]:
+) -> _LoadedRealSymbol:
     target_end = min(data.end_date, date.today())
     rows = get_daily_bar_models(
         session,
@@ -269,40 +275,49 @@ def _load_real_symbol(
         target_end,
         data.adjustment,
     )
-    if data.refresh or not rows:
-        _sync_window(
-            session,
-            settings,
-            symbol=symbol,
-            data=data,
-            start_date=data.start_date,
-            end_date=target_end,
-            force=data.refresh,
-        )
-    else:
-        first_date = rows[0].trading_date
-        last_date = rows[-1].trading_date
-        if first_date > data.start_date:
+    refresh_warnings: list[str] = []
+    try:
+        if data.refresh or not rows:
             _sync_window(
                 session,
                 settings,
                 symbol=symbol,
                 data=data,
                 start_date=data.start_date,
-                end_date=first_date - timedelta(days=1),
-                force=False,
-            )
-        stale_weekdays = _weekday_count(last_date + timedelta(days=1), target_end)
-        if stale_weekdays > MAX_ACCEPTABLE_STALE_WEEKDAYS:
-            _sync_window(
-                session,
-                settings,
-                symbol=symbol,
-                data=data,
-                start_date=last_date + timedelta(days=1),
                 end_date=target_end,
-                force=False,
+                force=data.refresh,
             )
+        else:
+            first_date = rows[0].trading_date
+            last_date = rows[-1].trading_date
+            if first_date > data.start_date:
+                _sync_window(
+                    session,
+                    settings,
+                    symbol=symbol,
+                    data=data,
+                    start_date=data.start_date,
+                    end_date=first_date - timedelta(days=1),
+                    force=False,
+                )
+            stale_weekdays = _weekday_count(last_date + timedelta(days=1), target_end)
+            if stale_weekdays > MAX_ACCEPTABLE_STALE_WEEKDAYS:
+                _sync_window(
+                    session,
+                    settings,
+                    symbol=symbol,
+                    data=data,
+                    start_date=last_date + timedelta(days=1),
+                    end_date=target_end,
+                    force=False,
+                )
+    except StonksUpError as exc:
+        if not rows:
+            raise
+        refresh_warnings.append(
+            f"WARN: {symbol} provider refresh failed ({exc.code}); "
+            "persisted cached bars were used."
+        )
 
     rows = get_daily_bar_models(
         session,
@@ -318,7 +333,10 @@ def _load_real_symbol(
             status_code=422,
             details={"symbol": symbol, "available_bars": len(rows)},
         )
-    return _to_engine_bars(rows)
+    return _LoadedRealSymbol(
+        rows=_to_engine_bars(rows),
+        refresh_warnings=refresh_warnings,
+    )
 
 
 def load_backtest_data(
@@ -360,14 +378,14 @@ def load_backtest_data(
             ],
         )
 
-    rows = _load_real_symbol(
+    strategy_data = _load_real_symbol(
         session,
         settings,
         symbol=strategy.symbol,
         data=data,
     )
-    benchmark_rows = (
-        rows
+    benchmark_data = (
+        strategy_data
         if benchmark_symbol == strategy.symbol
         else _load_real_symbol(
             session,
@@ -376,6 +394,16 @@ def load_backtest_data(
             data=data,
         )
     )
+    rows = strategy_data.rows
+    benchmark_rows = benchmark_data.rows
+    refresh_warnings = [
+        *strategy_data.refresh_warnings,
+        *(
+            benchmark_data.refresh_warnings
+            if benchmark_data is not strategy_data
+            else []
+        ),
+    ]
     quality = _quality_report(
         rows,
         benchmark_rows,
@@ -413,6 +441,7 @@ def load_backtest_data(
                 "PASS: benchmark performance is calculated from an independently "
                 "persisted price series."
             ),
+            *refresh_warnings,
             "LIMIT: point-in-time universe and survivorship-bias controls are not enabled yet.",
         ],
     )

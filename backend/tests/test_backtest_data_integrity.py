@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.core.errors import StonksUpError
 from app.db.base import Base
 from app.db.session import get_engine
 from app.main import create_app
@@ -260,17 +261,34 @@ def test_real_backtest_reuses_recent_cached_tail(
             assert seed.status_code == 200
 
         calls.clear()
+        run_payload = {
+            "prompt": "MU buy near EMA5 and sell when close falls below EMA5",
+            "data": {
+                "mode": "real",
+                "adjustment": "all",
+                "benchmark_symbol": "SPY",
+                "start_date": requested_start.isoformat(),
+                "end_date": requested_end.isoformat(),
+            },
+        }
         response = client.post(
             "/api/v1/backtests/compile-and-run",
+            json=run_payload,
+        )
+
+        def fail_fetch(*_args, **_kwargs):
+            raise StonksUpError(
+                "market_data_http_error",
+                "Market data provider returned an HTTP error.",
+                status_code=502,
+            )
+
+        monkeypatch.setattr(TwelveDataClient, "fetch_daily", fail_fetch)
+        fallback = client.post(
+            "/api/v1/backtests/compile-and-run",
             json={
-                "prompt": "MU buy near EMA5 and sell when close falls below EMA5",
-                "data": {
-                    "mode": "real",
-                    "adjustment": "all",
-                    "benchmark_symbol": "SPY",
-                    "start_date": requested_start.isoformat(),
-                    "end_date": requested_end.isoformat(),
-                },
+                **run_payload,
+                "data": {**run_payload["data"], "refresh": True},
             },
         )
 
@@ -280,6 +298,10 @@ def test_real_backtest_reuses_recent_cached_tail(
     assert quality["actual_end"] == cached_end.isoformat()
     assert quality["stale_trading_days"] == 2
     assert quality["status"] == "pass"
+    assert fallback.status_code == 200
+    fallback_result = fallback.json()["data"]["backtest"]
+    assert fallback_result["data_quality"]["status"] == "pass"
+    assert sum("cached bars were used" in item for item in fallback_result["audit"]) == 2
 
     engine.dispose()
     get_engine.cache_clear()
