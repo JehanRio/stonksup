@@ -198,6 +198,93 @@ def test_real_backtest_fills_both_sides_of_cached_window(
     get_engine.cache_clear()
 
 
+def test_real_backtest_reuses_recent_cached_tail(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    requested_start = date(2025, 1, 2)
+    cached_end = date(2025, 8, 8)
+    requested_end = date(2025, 8, 12)
+    calls: list[tuple[str, date, date]] = []
+
+    def fake_fetch(
+        _client,
+        symbol,
+        start_date,
+        end_date,
+        adjustment="all",
+    ):
+        calls.append((symbol, start_date, end_date))
+        base = Decimal("90") if symbol == "MU" else Decimal("500")
+        bars = [
+            ProviderBar(
+                trading_date=trading_date,
+                open=base + Decimal(index) / 100,
+                high=base + Decimal("2") + Decimal(index) / 100,
+                low=base - Decimal("1") + Decimal(index) / 100,
+                close=base + Decimal("1") + Decimal(index) / 100,
+                volume=10_000_000 + index,
+            )
+            for index, trading_date in enumerate(_weekdays(start_date, end_date))
+        ]
+        return ProviderBatch(
+            symbol=symbol,
+            instrument_name=symbol,
+            exchange="NASDAQ" if symbol == "MU" else "NYSE ARCA",
+            currency="USD",
+            adjustment=adjustment,
+            bars=bars,
+        )
+
+    monkeypatch.setattr(TwelveDataClient, "fetch_daily", fake_fetch)
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'recent-cache.db').as_posix()}"
+    engine = get_engine(database_url)
+    Base.metadata.create_all(engine)
+    settings = Settings(
+        environment="test",
+        database_url=database_url,
+        twelve_data_api_key="test-secret",
+    )
+
+    with TestClient(create_app(settings)) as client:
+        for symbol in ("MU", "SPY"):
+            seed = client.post(
+                "/api/v1/market-data/sync",
+                json={
+                    "symbol": symbol,
+                    "start_date": requested_start.isoformat(),
+                    "end_date": cached_end.isoformat(),
+                    "adjustment": "all",
+                },
+            )
+            assert seed.status_code == 200
+
+        calls.clear()
+        response = client.post(
+            "/api/v1/backtests/compile-and-run",
+            json={
+                "prompt": "MU buy near EMA5 and sell when close falls below EMA5",
+                "data": {
+                    "mode": "real",
+                    "adjustment": "all",
+                    "benchmark_symbol": "SPY",
+                    "start_date": requested_start.isoformat(),
+                    "end_date": requested_end.isoformat(),
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert calls == []
+    quality = response.json()["data"]["backtest"]["data_quality"]
+    assert quality["actual_end"] == cached_end.isoformat()
+    assert quality["stale_trading_days"] == 2
+    assert quality["status"] == "pass"
+
+    engine.dispose()
+    get_engine.cache_clear()
+
+
 def test_risk_free_rate_changes_metrics_and_relative_return_is_explicit(client) -> None:
     payload = {
         "prompt": "MU buy near EMA5 and sell when close falls below EMA5",

@@ -23,6 +23,9 @@ from app.services.market_data import (
 )
 
 
+MAX_ACCEPTABLE_STALE_WEEKDAYS = 3
+
+
 @dataclass(frozen=True)
 class LoadedBacktestData:
     rows: list[Bar]
@@ -180,7 +183,9 @@ def _quality_report(
         ),
         (
             "PASS: cached data is current for the requested end date."
-            if not enforce_coverage or max(stale_days, benchmark_stale_days) <= 3
+            if not enforce_coverage
+            or max(stale_days, benchmark_stale_days)
+            <= MAX_ACCEPTABLE_STALE_WEEKDAYS
             else (
                 "FAIL: cached data is stale "
                 f"(asset={stale_days}, benchmark={benchmark_stale_days} weekdays)."
@@ -287,7 +292,8 @@ def _load_real_symbol(
                 end_date=first_date - timedelta(days=1),
                 force=False,
             )
-        if last_date < target_end:
+        stale_weekdays = _weekday_count(last_date + timedelta(days=1), target_end)
+        if stale_weekdays > MAX_ACCEPTABLE_STALE_WEEKDAYS:
             _sync_window(
                 session,
                 settings,
