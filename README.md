@@ -35,8 +35,9 @@ npm run dev
 Optional AI configuration in `.env.local`:
 
 - `GEMINI_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `DEEPSEEK_MODEL` (defaults to `deepseek-v4-flash`)
+
+DeepSeek is configured only on the backend with
+`STONKSUP_DEEPSEEK_API_KEY`; it is never included in the browser bundle.
 
 Quality checks:
 

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     market_data_provider: Literal["twelvedata"] = "twelvedata"
     twelve_data_api_key: SecretStr | None = None
     market_data_timeout_seconds: float = Field(default=12, gt=0, le=60)
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    agent_model_timeout_seconds: float = Field(default=45, gt=0, le=120)
+    agent_max_turns: int = Field(default=8, ge=2, le=20)
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://127.0.0.1:4175",

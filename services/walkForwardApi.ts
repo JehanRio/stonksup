@@ -216,6 +216,8 @@ const serializeStrategy = (strategy: StrategySpec) => ({
   kind: strategy.kind,
   timeframe: strategy.timeframe,
   ema_period: strategy.emaPeriod,
+  entry_ema_period: strategy.entryEmaPeriod,
+  exit_ema_period: strategy.exitEmaPeriod,
   fast_period: strategy.fastPeriod,
   slow_period: strategy.slowPeriod,
   lookback_period: strategy.lookbackPeriod,

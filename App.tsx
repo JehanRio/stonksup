@@ -7,6 +7,7 @@ import WorkspaceEmptyPage from './pages/system/WorkspaceEmptyPage';
 const InvestorPage = React.lazy(() => import('./pages/investor/InvestorPage'));
 const LedgerPage = React.lazy(() => import('./pages/ledger/LedgerPage'));
 const StrategyLabPage = React.lazy(() => import('./pages/strategy/StrategyLabPage'));
+const AgentRunsPage = React.lazy(() => import('./pages/agent-runs/AgentRunsPage'));
 
 const App: React.FC = () => {
   const [route, setRoute] = useState<WorkspaceRoute>(getWorkspaceRoute);
@@ -27,9 +28,8 @@ const App: React.FC = () => {
     if (route === 'market') return <InvestorPage />;
     if (route === 'strategy') return <StrategyLabPage />;
     if (route === 'portfolio' || route === 'journal') return <LedgerPage />;
-    if (route === 'research' || route === 'agent-runs') {
-      return <WorkspaceEmptyPage route={route} />;
-    }
+    if (route === 'agent-runs') return <AgentRunsPage />;
+    if (route === 'research') return <WorkspaceEmptyPage route={route} />;
     return <DashboardPage />;
   };
 

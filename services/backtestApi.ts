@@ -12,6 +12,8 @@ export type StrategySpec = {
   kind: StrategyKind;
   timeframe: '1d';
   emaPeriod: number;
+  entryEmaPeriod: number;
+  exitEmaPeriod: number;
   fastPeriod: number;
   slowPeriod: number;
   lookbackPeriod: number;
@@ -177,6 +179,8 @@ type ApiStrategySpec = {
   kind: StrategyKind;
   timeframe: '1d';
   ema_period: number;
+  entry_ema_period: number;
+  exit_ema_period: number;
   fast_period: number;
   slow_period: number;
   lookback_period: number;
@@ -335,6 +339,8 @@ const mapStrategy = (strategy: ApiStrategySpec): StrategySpec => ({
   kind: strategy.kind,
   timeframe: strategy.timeframe,
   emaPeriod: strategy.ema_period,
+  entryEmaPeriod: strategy.entry_ema_period,
+  exitEmaPeriod: strategy.exit_ema_period,
   fastPeriod: strategy.fast_period,
   slowPeriod: strategy.slow_period,
   lookbackPeriod: strategy.lookback_period,
@@ -355,6 +361,8 @@ const serializeStrategy = (strategy: StrategySpec): ApiStrategySpec => ({
   kind: strategy.kind,
   timeframe: strategy.timeframe,
   ema_period: strategy.emaPeriod,
+  entry_ema_period: strategy.entryEmaPeriod,
+  exit_ema_period: strategy.exitEmaPeriod,
   fast_period: strategy.fastPeriod,
   slow_period: strategy.slowPeriod,
   lookback_period: strategy.lookbackPeriod,

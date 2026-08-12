@@ -15,6 +15,10 @@ EXPECTED_TABLES = {
     "walk_forward_experiments",
     "walk_forward_windows",
     "walk_forward_trials",
+    "agent_runs",
+    "agent_steps",
+    "agent_tool_calls",
+    "agent_model_calls",
 }
 
 

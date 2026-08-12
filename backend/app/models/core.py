@@ -330,3 +330,103 @@ class WalkForwardTrial(UUIDPrimaryKeyMixin, Base):
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     window: Mapped[WalkForwardWindow] = relationship(back_populates="trials")
+
+
+class AgentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (Index("ix_agent_runs_status_created_at", "status", "created_at"),)
+
+    run_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32))
+    current_step: Mapped[str] = mapped_column(String(64), nullable=False)
+    final_output: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    steps: Mapped[list[AgentStep]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="AgentStep.sequence",
+    )
+    tool_calls: Mapped[list[AgentToolCall]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="AgentToolCall.sequence",
+    )
+    model_calls: Mapped[list[AgentModelCall]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="AgentModelCall.sequence",
+    )
+
+
+class AgentStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "agent_steps"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_steps_run_sequence"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    run: Mapped[AgentRun] = relationship(back_populates="steps")
+
+
+class AgentToolCall(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "agent_tool_calls"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_tool_calls_run_sequence"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[AgentRun] = relationship(back_populates="tool_calls")
+
+
+class AgentModelCall(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "agent_model_calls"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_model_calls_run_sequence"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    input_messages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finish_reason: Mapped[str | None] = mapped_column(String(32))
+    output_summary: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[AgentRun] = relationship(back_populates="model_calls")

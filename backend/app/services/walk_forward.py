@@ -54,7 +54,7 @@ class _Candidate:
 
 def _primary_parameter(strategy: StrategySpec) -> str:
     return {
-        StrategyKind.EMA_PULLBACK: "ema_period",
+        StrategyKind.EMA_PULLBACK: "entry_ema_period",
         StrategyKind.MA_CROSSOVER: "fast_period",
         StrategyKind.MOMENTUM_BREAKOUT: "lookback_period",
         StrategyKind.RSI_MEAN_REVERSION: "rsi_period",

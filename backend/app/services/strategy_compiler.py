@@ -10,8 +10,8 @@ from app.schemas.backtests import (
 )
 
 
-CONTRACT_VERSION = "strategy-dsl.v0.2"
-COMPILER_NAME = "deterministic-nl-compiler.v1"
+CONTRACT_VERSION = "strategy-dsl.v0.3"
+COMPILER_NAME = "deterministic-nl-compiler.v2"
 IGNORED_SYMBOL_TOKENS = {
     "AI",
     "EMA",
@@ -53,6 +53,13 @@ def _extract_day_periods(prompt: str) -> list[int]:
     ]
 
 
+def _extract_ema_periods(prompt: str) -> list[int]:
+    return [
+        int(value)
+        for value in re.findall(r"EMA\s*[-_ ]?\s*(\d+)", prompt, re.IGNORECASE)
+    ]
+
+
 def _infer_kind(prompt: str, preferred_kind: StrategyKind | None) -> StrategyKind:
     if preferred_kind is not None:
         return preferred_kind
@@ -73,17 +80,18 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
     kind = _infer_kind(prompt, request.preferred_kind)
     symbol, has_explicit_symbol = _extract_symbol(prompt)
     day_periods = _extract_day_periods(prompt)
+    ema_periods = _extract_ema_periods(prompt)
 
-    ema_period = int(
-        _extract_number(
+    entry_ema_period = int(
+        ema_periods[0]
+        if ema_periods
+        else _extract_number(
             prompt,
-            [
-                r"EMA\s*[-_ ]?\s*(\d+)",
-                r"(\d+)\s*(?:个)?(?:交易)?日\s*(?:EMA|指数(?:移动)?均线)",
-            ],
+            [r"(\d+)\s*(?:个)?(?:交易)?日\s*(?:EMA|指数(?:移动)?均线)"],
         )
         or 5
     )
+    exit_ema_period = ema_periods[1] if len(ema_periods) > 1 else entry_ema_period
     stop_loss_value = _extract_number(
         prompt,
         [
@@ -107,7 +115,9 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
         fast_period = max(2, slow_period // 3)
 
     names = {
-        StrategyKind.EMA_PULLBACK: f"{symbol} EMA{ema_period} 回踩",
+        StrategyKind.EMA_PULLBACK: (
+            f"{symbol} EMA{entry_ema_period}/{exit_ema_period} 回踩"
+        ),
         StrategyKind.MA_CROSSOVER: f"{symbol} 均线趋势",
         StrategyKind.MOMENTUM_BREAKOUT: f"{symbol} 动量突破",
         StrategyKind.RSI_MEAN_REVERSION: f"{symbol} RSI 均值回归",
@@ -116,7 +126,9 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
         name=names[kind],
         symbol=symbol,
         kind=kind,
-        ema_period=max(2, min(ema_period, 250)),
+        ema_period=max(2, min(entry_ema_period, 250)),
+        entry_ema_period=max(2, min(entry_ema_period, 250)),
+        exit_ema_period=max(2, min(exit_ema_period, 250)),
         fast_period=max(2, min(fast_period, 120)),
         slow_period=max(5, min(slow_period, 250)),
         lookback_period=max(5, min(day_periods[0] if day_periods else 20, 120)),
@@ -130,11 +142,11 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
     interpretations: dict[StrategyKind, list[str]] = {
         StrategyKind.EMA_PULLBACK: [
             (
-                f"前一交易日收盘位于 EMA{strategy.ema_period} 上方，"
-                f"当日最低价触及 EMA{strategy.ema_period} 且收盘重新站在均线上方时产生买入信号。"
+                f"前一交易日收盘位于 EMA{strategy.entry_ema_period} 上方，"
+                f"当日最低价触及 EMA{strategy.entry_ema_period} 且收盘重新站在均线上方时产生买入信号。"
             ),
             (
-                f"收盘价从上向下有效跌破 EMA{strategy.ema_period} 时产生卖出信号。"
+                f"收盘价从上向下有效跌破 EMA{strategy.exit_ema_period} 时产生卖出信号。"
             ),
         ],
         StrategyKind.MA_CROSSOVER: [
@@ -171,7 +183,10 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
     warnings: list[str] = []
 
     if kind == StrategyKind.EMA_PULLBACK:
-        assumptions.append("“跌到/回踩”解释为盘中触及 EMA、但收盘守住 EMA；“跌破”指收盘下穿同一条 EMA。")
+        assumptions.append(
+            "“跌到/回踩”解释为盘中触及入场 EMA、但收盘守住入场 EMA；"
+            "“跌破”指收盘下穿离场 EMA。"
+        )
     if not has_explicit_symbol:
         assumptions.append("原描述未识别到标的代码，本次默认使用 MU。")
     if stop_loss_value is None:
@@ -189,7 +204,7 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
     confidence = 0.94 if has_explicit_symbol else 0.86
     if kind == StrategyKind.EMA_PULLBACK and "跌破" not in prompt:
         confidence -= 0.08
-        warnings.append("原描述没有明确退出条件，当前采用收盘跌破同一条 EMA 退出。")
+        warnings.append("原描述没有明确退出条件，当前采用收盘跌破入场 EMA 退出。")
 
     return StrategyCompilation(
         prompt=prompt,

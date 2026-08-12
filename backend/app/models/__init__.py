@@ -1,4 +1,8 @@
 from app.models.core import (
+    AgentModelCall,
+    AgentRun,
+    AgentStep,
+    AgentToolCall,
     BacktestRun,
     BacktestTrade,
     Instrument,
@@ -10,6 +14,10 @@ from app.models.core import (
 )
 
 __all__ = [
+    "AgentRun",
+    "AgentStep",
+    "AgentToolCall",
+    "AgentModelCall",
     "Instrument",
     "MarketBar",
     "Strategy",

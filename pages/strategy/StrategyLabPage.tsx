@@ -86,6 +86,8 @@ const DEFAULT_STRATEGY: StrategySpec = {
   kind: 'ema_pullback',
   timeframe: '1d',
   emaPeriod: 5,
+  entryEmaPeriod: 5,
+  exitEmaPeriod: 5,
   fastPeriod: 20,
   slowPeriod: 60,
   lookbackPeriod: 20,
@@ -102,7 +104,7 @@ const DEFAULT_STRATEGY: StrategySpec = {
 
 const contractName = (strategy: StrategySpec) => {
   if (strategy.kind === 'ema_pullback') {
-    return `${strategy.symbol} EMA${strategy.emaPeriod} 回踩`;
+    return `${strategy.symbol} EMA${strategy.entryEmaPeriod}/${strategy.exitEmaPeriod} 回踩`;
   }
   if (strategy.kind === 'ma_crossover') {
     return `${strategy.symbol} MA${strategy.fastPeriod}/${strategy.slowPeriod} 交叉`;
@@ -544,7 +546,8 @@ const StrategyLabPage: React.FC = () => {
 
               {definition.kind === 'ema_pullback' && (
                 <>
-                  <NumericField label="EMA 周期" value={definition.emaPeriod} suffix="日" min={2} max={250} onChange={(value) => updateDefinition('emaPeriod', value)} />
+                  <NumericField label="入场 EMA" value={definition.entryEmaPeriod} suffix="日" min={2} max={250} onChange={(value) => updateDefinition('entryEmaPeriod', value)} />
+                  <NumericField label="离场 EMA" value={definition.exitEmaPeriod} suffix="日" min={2} max={250} onChange={(value) => updateDefinition('exitEmaPeriod', value)} />
                   <NumericField label="触线容差" value={definition.touchToleranceBps} suffix="bps" min={0} max={200} onChange={(value) => updateDefinition('touchToleranceBps', value)} />
                 </>
               )}

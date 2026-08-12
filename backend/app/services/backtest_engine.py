@@ -201,7 +201,8 @@ def run_backtest(
 
     commission_rate = config.commission_bps / 10_000
     slippage_rate = config.slippage_bps / 10_000
-    ema_values = _ema(rows, strategy.ema_period)
+    entry_ema_values = _ema(rows, strategy.entry_ema_period)
+    exit_ema_values = _ema(rows, strategy.exit_ema_period)
     fast_sma = _sma(rows, strategy.fast_period)
     slow_sma = _sma(rows, strategy.slow_period)
     exit_sma = _sma(rows, 20)
@@ -290,14 +291,22 @@ def run_backtest(
 
         previous_row = rows[index - 1] if index else None
         if strategy.kind == StrategyKind.EMA_PULLBACK:
-            current_ema = ema_values[index]
-            previous_ema = ema_values[index - 1] if index else None
-            if current_ema is None or previous_ema is None or previous_row is None:
+            current_entry_ema = entry_ema_values[index]
+            previous_entry_ema = entry_ema_values[index - 1] if index else None
+            current_exit_ema = exit_ema_values[index]
+            previous_exit_ema = exit_ema_values[index - 1] if index else None
+            if (
+                current_entry_ema is None
+                or previous_entry_ema is None
+                or current_exit_ema is None
+                or previous_exit_ema is None
+                or previous_row is None
+            ):
                 continue
             tolerance = strategy.touch_tolerance_bps / 10_000
-            touched_ema = row.low <= current_ema * (1 + tolerance)
-            held_ema = row.close >= current_ema
-            approached_from_above = previous_row.close > previous_ema
+            touched_ema = row.low <= current_entry_ema * (1 + tolerance)
+            held_ema = row.close >= current_entry_ema
+            approached_from_above = previous_row.close > previous_entry_ema
             if (
                 position.quantity == 0
                 and approached_from_above
@@ -307,8 +316,8 @@ def run_backtest(
                 pending = PendingOrder("buy", "ema_pullback_hold")
             elif (
                 position.quantity > 0
-                and previous_row.close >= previous_ema
-                and row.close < current_ema
+                and previous_row.close >= previous_exit_ema
+                and row.close < current_exit_ema
             ):
                 pending = PendingOrder("sell", "ema_close_cross_down")
             continue

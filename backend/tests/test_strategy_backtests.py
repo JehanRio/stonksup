@@ -22,12 +22,27 @@ def test_compiler_builds_ema_pullback_contract() -> None:
     assert compilation.strategy.symbol == "MU"
     assert compilation.strategy.kind == StrategyKind.EMA_PULLBACK
     assert compilation.strategy.ema_period == 5
+    assert compilation.strategy.entry_ema_period == 5
+    assert compilation.strategy.exit_ema_period == 5
     assert compilation.strategy.allocation_percent == 80
     assert compilation.strategy.stop_loss_percent == 6
     assert compilation.strategy.signal_at == "close"
     assert compilation.strategy.fill_at == "next_open"
-    assert compilation.contract_version == "strategy-dsl.v0.2"
-    assert "盘中触及 EMA" in compilation.assumptions[-1]
+    assert compilation.contract_version == "strategy-dsl.v0.3"
+    assert "盘中触及入场 EMA" in compilation.assumptions[-1]
+
+
+def test_compiler_separates_entry_and_exit_ema_periods() -> None:
+    compilation = compile_strategy(
+        CompileStrategyRequest(
+            prompt="MU 回踩 EMA20 并重新站稳时买入，收盘跌破 EMA5 时卖出。"
+        )
+    )
+
+    assert compilation.strategy.entry_ema_period == 20
+    assert compilation.strategy.exit_ema_period == 5
+    assert "EMA20" in compilation.interpretation[0]
+    assert "EMA5" in compilation.interpretation[1]
 
 
 def test_compiler_declares_defaults_instead_of_hiding_them() -> None:

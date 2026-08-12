@@ -24,6 +24,8 @@ class StrategySpec(BaseModel):
     kind: StrategyKind
     timeframe: Literal["1d"] = "1d"
     ema_period: int = Field(default=5, ge=2, le=250)
+    entry_ema_period: int = Field(default=5, ge=2, le=250)
+    exit_ema_period: int = Field(default=5, ge=2, le=250)
     fast_period: int = Field(default=20, ge=2, le=120)
     slow_period: int = Field(default=60, ge=5, le=250)
     lookback_period: int = Field(default=20, ge=5, le=120)
@@ -37,8 +39,21 @@ class StrategySpec(BaseModel):
     fill_at: Literal["next_open"] = "next_open"
     long_only: Literal[True] = True
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_ema_periods(cls, data):
+        if not isinstance(data, dict):
+            return data
+        migrated = dict(data)
+        legacy_period = migrated.get("ema_period", 5)
+        migrated.setdefault("entry_ema_period", legacy_period)
+        migrated.setdefault("exit_ema_period", legacy_period)
+        return migrated
+
     @model_validator(mode="after")
     def validate_periods(self) -> "StrategySpec":
+        if self.kind == StrategyKind.EMA_PULLBACK:
+            self.ema_period = self.entry_ema_period
         if self.kind == StrategyKind.MA_CROSSOVER and self.fast_period >= self.slow_period:
             raise ValueError("fast_period must be lower than slow_period")
         return self

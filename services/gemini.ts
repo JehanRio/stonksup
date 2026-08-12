@@ -18,25 +18,7 @@ type JournalReviewInput = {
   dailySummary: string;
 };
 
-type DeepSeekMessage = {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-};
-
-type DeepSeekChatResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string;
-    };
-  }>;
-  error?: {
-    message?: string;
-  };
-};
-
 const GEMINI_MODEL = 'gemini-3-flash-preview';
-const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
 
 // 辅助函数：睡眠
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -85,80 +67,6 @@ const generateWithRetry = async (
       throw error;
     }
   }
-  throw lastError;
-};
-
-const generateDeepSeekChat = async (
-  messages: DeepSeekMessage[],
-  options: {
-    temperature?: number;
-    maxTokens?: number;
-    maxRetries?: number;
-  } = {}
-): Promise<string> => {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('DeepSeek API Key 未配置');
-  }
-
-  const maxRetries = options.maxRetries ?? 1;
-  let lastError: any;
-
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: DEEPSEEK_MODEL,
-          messages,
-          temperature: options.temperature ?? 0.5,
-          max_tokens: options.maxTokens ?? 2200,
-          stream: false,
-        }),
-      });
-
-      const raw = await response.text();
-      let data: DeepSeekChatResponse | null = null;
-
-      try {
-        data = raw ? JSON.parse(raw) : null;
-      } catch {
-        data = null;
-      }
-
-      if (!response.ok) {
-        const error = new Error(
-          `DeepSeek 请求失败(${response.status}): ${data?.error?.message || raw || response.statusText || '未知原因'}`
-        );
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      const text = data?.choices?.[0]?.message?.content?.trim();
-      if (!text) {
-        throw new Error('DeepSeek 未返回有效评价');
-      }
-
-      return text;
-    } catch (error: any) {
-      lastError = error;
-      const status = error?.status;
-      const canRetry = !status || status === 429 || status >= 500;
-
-      if (i < maxRetries && canRetry) {
-        await sleep(Math.pow(2, i + 1) * 1000);
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
   throw lastError;
 };
 
@@ -340,42 +248,13 @@ const generateGeminiJournalReview = async (prompt: string): Promise<string> => {
   return `${text}\n\n参考资料（Gemini 搜索）：\n${sourceText}`;
 };
 
-const generateDeepSeekJournalReview = async (prompt: string): Promise<string> => {
-  return generateDeepSeekChat(
-    [
-      {
-        role: 'system',
-        content: '你是一名严谨的短线交易复盘教练。当前降级通道没有联网搜索工具，必须明确说明未进行实时资料核验；请只基于用户提供内容评价，使用中文输出，保持结构清晰，重点给出可执行修正建议。',
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ],
-    {
-      temperature: 0.5,
-      maxTokens: 2200,
-    }
-  );
-};
-
 export const generateJournalReview = async (journal: JournalReviewInput): Promise<string> => {
   const prompt = buildJournalReviewPrompt(journal);
 
   try {
     return await generateGeminiJournalReview(prompt);
   } catch (geminiError: any) {
-    console.warn('Gemini journal review failed, falling back to DeepSeek:', geminiError);
-
-    try {
-      const review = await generateDeepSeekJournalReview(prompt);
-      return `【DeepSeek 降级模式｜未联网核验】\nGemini 实时搜索评价暂时不可用，以下评价只基于你填写的日记内容生成，没有核验实时行情或新闻。\n\n${review}`;
-    } catch (deepSeekError: any) {
-      console.error('Journal Review Error:', {
-        gemini: geminiError,
-        deepseek: deepSeekError,
-      });
-      return `AI 评价失败: Gemini ${getErrorMessage(geminiError)}；DeepSeek 降级失败: ${getErrorMessage(deepSeekError)}`;
-    }
+    console.error('Journal Review Error:', geminiError);
+    return `AI 评价失败: Gemini ${getErrorMessage(geminiError)}。DeepSeek 已迁移至后端 Agent，浏览器不再持有该密钥。`;
   }
 };
