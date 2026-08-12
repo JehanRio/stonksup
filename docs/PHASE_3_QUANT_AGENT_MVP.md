@@ -8,7 +8,7 @@ Turn a natural-language research request into a reproducible quantitative workfl
 
 1. The user submits a research objective in `Agent Runs`.
 2. DeepSeek receives the system policy and the available tool schemas.
-3. `compile_strategy` converts the request into Strategy Contract v0.3.
+3. `compile_strategy` converts the unmodified user request into Strategy Contract v0.4.
 4. `get_market_data_status` reports persistent market-data coverage.
 5. `run_backtest` executes the deterministic backtest engine.
 6. `run_walk_forward` performs rolling out-of-sample validation and parameter search.
@@ -17,7 +17,7 @@ Turn a natural-language research request into a reproducible quantitative workfl
 
 The model does not calculate returns or invent backtest metrics. It only plans, calls tools, and explains tool outputs.
 
-## Strategy Contract v0.3
+## Strategy Contract v0.4
 
 EMA pullback strategies now support independent entry and exit periods:
 
@@ -26,6 +26,12 @@ EMA pullback strategies now support independent entry and exit periods:
 - `ema_period`: retained as a compatibility alias for older stored requests.
 
 Example: `回踩 EMA20 买入，跌破 EMA5 卖出` compiles to an entry EMA of 20 and an exit EMA of 5.
+
+The compiler is fail-closed. It emits `ready`, `needs_clarification`, or
+`unsupported`, plus machine-readable issues. Only `ready` contracts may reach
+market-data, backtest, or walk-forward tools. The agent cannot replace the
+original prompt with a simplified rewrite, so unsupported clauses cannot be
+silently discarded.
 
 ## API
 

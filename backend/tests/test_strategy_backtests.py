@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.schemas.backtests import (
@@ -28,8 +29,9 @@ def test_compiler_builds_ema_pullback_contract() -> None:
     assert compilation.strategy.stop_loss_percent == 6
     assert compilation.strategy.signal_at == "close"
     assert compilation.strategy.fill_at == "next_open"
-    assert compilation.contract_version == "strategy-dsl.v0.3"
-    assert "盘中触及入场 EMA" in compilation.assumptions[-1]
+    assert compilation.contract_version == "strategy-dsl.v0.4"
+    assert compilation.status == "ready"
+    assert compilation.executable is True
 
 
 def test_compiler_separates_entry_and_exit_ema_periods() -> None:
@@ -45,6 +47,115 @@ def test_compiler_separates_entry_and_exit_ema_periods() -> None:
     assert "EMA5" in compilation.interpretation[1]
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        (
+            "MU 回踩 EMA20 买入，收盘跌破 EMA5 卖出。",
+            (StrategyKind.EMA_PULLBACK, 20, 5),
+        ),
+        (
+            "MU 收盘跌破 EMA5 离场，盘中触碰 EMA20 并站稳后进场。",
+            (StrategyKind.EMA_PULLBACK, 20, 5),
+        ),
+        (
+            "MU 踩住 EMA20 做多，EMA5 下方收盘时平仓。",
+            (StrategyKind.EMA_PULLBACK, 20, 5),
+        ),
+    ],
+)
+def test_ema_paraphrases_compile_to_same_contract(prompt, expected) -> None:
+    compilation = compile_strategy(CompileStrategyRequest(prompt=prompt))
+
+    assert compilation.status == "ready"
+    assert (
+        compilation.strategy.kind,
+        compilation.strategy.entry_ema_period,
+        compilation.strategy.exit_ema_period,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "AAPL MA10 金叉 MA30 买入，死叉卖出。",
+        "AAPL 的10日均线上穿30日均线时进场，10日线下穿30日线时离场。",
+    ],
+)
+def test_ma_crossover_paraphrases_compile_to_same_contract(prompt) -> None:
+    compilation = compile_strategy(CompileStrategyRequest(prompt=prompt))
+
+    assert compilation.status == "ready"
+    assert compilation.strategy.kind == StrategyKind.MA_CROSSOVER
+    assert compilation.strategy.fast_period == 10
+    assert compilation.strategy.slow_period == 30
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "QQQ RSI14 低于28买入，高于60卖出。",
+        "QQQ RSI(14) 小于 28 进场，大于 60 离场。",
+    ],
+)
+def test_rsi_paraphrases_compile_to_same_contract(prompt) -> None:
+    compilation = compile_strategy(CompileStrategyRequest(prompt=prompt))
+
+    assert compilation.status == "ready"
+    assert compilation.strategy.kind == StrategyKind.RSI_MEAN_REVERSION
+    assert compilation.strategy.rsi_period == 14
+    assert compilation.strategy.rsi_entry == 28
+    assert compilation.strategy.rsi_exit == 60
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "NVDA 突破过去20日最高价买入，收盘跌破MA20卖出。",
+        "NVDA 收盘创近20日新高时进场，收盘跌破20日均线时离场。",
+    ],
+)
+def test_breakout_paraphrases_compile_to_same_contract(prompt) -> None:
+    compilation = compile_strategy(CompileStrategyRequest(prompt=prompt))
+
+    assert compilation.status == "ready"
+    assert compilation.strategy.kind == StrategyKind.MOMENTUM_BREAKOUT
+    assert compilation.strategy.lookback_period == 20
+
+
+def test_compiler_blocks_unsupported_clauses_without_dropping_them() -> None:
+    compilation = compile_strategy(
+        CompileStrategyRequest(
+            prompt="MU 回踩 EMA20 买入，财报超预期才执行，跌破 EMA5 卖出。"
+        )
+    )
+
+    assert compilation.status == "unsupported"
+    assert compilation.executable is False
+    assert [item.code for item in compilation.issues] == ["fundamental_data"]
+
+
+def test_compiler_requests_clarification_for_missing_symbol() -> None:
+    compilation = compile_strategy(
+        CompileStrategyRequest(prompt="回踩 EMA20 买入，跌破 EMA5 卖出。")
+    )
+
+    assert compilation.status == "needs_clarification"
+    assert compilation.executable is False
+    assert "symbol_missing" in {item.code for item in compilation.issues}
+
+
+def test_ascii_feature_tokens_do_not_match_inside_normal_words() -> None:
+    compilation = compile_strategy(
+        CompileStrategyRequest(
+            prompt="MU buy near EMA5 and sell when the close falls below EMA5"
+        )
+    )
+
+    assert compilation.status == "ready"
+    assert "fundamental_data" not in {item.code for item in compilation.issues}
+
+
 def test_compiler_declares_defaults_instead_of_hiding_them() -> None:
     compilation = compile_strategy(
         CompileStrategyRequest(prompt="跌到 EMA5 买入，跌破卖出")
@@ -53,7 +164,8 @@ def test_compiler_declares_defaults_instead_of_hiding_them() -> None:
     assert compilation.strategy.symbol == "MU"
     assert compilation.strategy.stop_loss_percent == 8
     assert compilation.strategy.allocation_percent == 95
-    assert any("默认使用 MU" in assumption for assumption in compilation.assumptions)
+    assert compilation.status == "needs_clarification"
+    assert any(item.code == "symbol_missing" for item in compilation.issues)
     assert any("默认止损" in warning for warning in compilation.warnings)
     assert any("95%" in warning for warning in compilation.warnings)
 
@@ -139,3 +251,18 @@ def test_compile_and_run_api(client: TestClient) -> None:
     assert body["data"]["backtest"]["bars"] == 300
     assert body["data"]["backtest"]["engine"] == "stonksup-deterministic-engine.v1"
     assert body["data"]["backtest"]["run_id"].startswith("BT-")
+
+
+def test_compile_and_run_api_blocks_unsupported_strategy(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/backtests/compile-and-run",
+        json={
+            "prompt": "MU 回踩 EMA20 买入，财报超预期才执行，跌破 EMA5 卖出。",
+            "bars": 300,
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 422
+    assert body["error"]["code"] == "strategy_compilation_blocked"
+    assert body["error"]["details"]["status"] == "unsupported"

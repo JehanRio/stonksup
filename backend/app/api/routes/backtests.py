@@ -26,7 +26,7 @@ from app.services.backtest_persistence import (
     get_backtest_run_history,
     persist_backtest,
 )
-from app.services.strategy_compiler import compile_strategy
+from app.services.strategy_compiler import compile_strategy, ensure_compilation_executable
 from app.services.walk_forward import run_walk_forward
 from app.services.walk_forward_persistence import persist_walk_forward
 
@@ -145,6 +145,7 @@ def compile_and_run_strategy(
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[CompileAndRunResult]:
     compilation = compile_strategy(CompileStrategyRequest(prompt=payload.prompt))
+    ensure_compilation_executable(compilation)
     result = _execute_backtest(
         session=session,
         settings=settings,

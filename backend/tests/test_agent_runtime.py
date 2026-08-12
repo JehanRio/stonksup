@@ -69,6 +69,50 @@ class FakeModelClient:
         )
 
 
+class RewritingModelClient:
+    provider = "fake"
+    model = "fake-rewriter"
+
+    def __init__(self) -> None:
+        self.turn = 0
+
+    def complete(self, _messages, _tools) -> ModelResponse:
+        self.turn += 1
+        if self.turn == 1:
+            calls = [
+                {
+                    "id": "call-compile",
+                    "type": "function",
+                    "function": {
+                        "name": "compile_strategy",
+                        "arguments": json.dumps(
+                            {"prompt": "MU 回踩 EMA20 买入，跌破 EMA5 卖出。"},
+                            ensure_ascii=False,
+                        ),
+                    },
+                }
+            ]
+            content = None
+        elif self.turn == 2:
+            calls = [
+                {
+                    "id": "call-backtest",
+                    "type": "function",
+                    "function": {"name": "run_backtest", "arguments": "{}"},
+                }
+            ]
+            content = None
+        else:
+            calls = []
+            content = "策略包含当前不支持的财报条件，已停止回测。"
+        return ModelResponse(
+            content=content,
+            tool_calls=calls,
+            finish_reason="stop" if not calls else "tool_calls",
+            usage=ModelUsage(input_tokens=30, output_tokens=10),
+        )
+
+
 def test_quant_agent_calls_tools_and_persists_trace(client) -> None:
     request = CreateAgentRunRequest(
         prompt=(
@@ -131,3 +175,24 @@ def test_agent_capability_reports_missing_key(client) -> None:
     assert body["provider"] == "deepseek"
     assert body["configured"] is False
     assert "run_backtest" in body["tools"]
+
+
+def test_agent_uses_original_prompt_and_blocks_model_rewrite(client) -> None:
+    request = CreateAgentRunRequest(
+        prompt="MU 回踩 EMA20 买入，财报超预期才执行，跌破 EMA5 卖出。",
+        data=BacktestDataConfig(mode="demo"),
+    )
+
+    with create_session(client.app.state.settings.database_url) as session:
+        result = run_quant_agent(
+            session,
+            client.app.state.settings,
+            request,
+            client=RewritingModelClient(),
+        )
+
+    compile_call, backtest_call = result.tool_calls
+    assert compile_call.result["data"]["status"] == "unsupported"
+    assert compile_call.result["data"]["issues"][0]["code"] == "fundamental_data"
+    assert backtest_call.status == "failed"
+    assert "存在歧义" in backtest_call.error_message

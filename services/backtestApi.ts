@@ -31,9 +31,18 @@ export type StrategySpec = {
 export type StrategyCompilation = {
   prompt: string;
   strategy: StrategySpec;
+  status: 'ready' | 'needs_clarification' | 'unsupported';
+  executable: boolean;
   interpretation: string[];
   assumptions: string[];
   warnings: string[];
+  issues: Array<{
+    code: string;
+    severity: 'clarification' | 'unsupported';
+    message: string;
+    fragment: string | null;
+  }>;
+  normalizedPrompt: string;
   confidence: number;
   contractVersion: string;
   compiler: string;
@@ -198,9 +207,18 @@ type ApiStrategySpec = {
 type ApiCompilation = {
   prompt: string;
   strategy: ApiStrategySpec;
+  status: 'ready' | 'needs_clarification' | 'unsupported';
+  executable: boolean;
   interpretation: string[];
   assumptions: string[];
   warnings: string[];
+  issues: Array<{
+    code: string;
+    severity: 'clarification' | 'unsupported';
+    message: string;
+    fragment: string | null;
+  }>;
+  normalized_prompt: string;
   confidence: number;
   contract_version: string;
   compiler: string;
@@ -397,9 +415,13 @@ const serializeConfig = (config: BacktestConfig) => ({
 const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
   prompt: compilation.prompt,
   strategy: mapStrategy(compilation.strategy),
+  status: compilation.status,
+  executable: compilation.executable,
   interpretation: compilation.interpretation,
   assumptions: compilation.assumptions,
   warnings: compilation.warnings,
+  issues: compilation.issues,
+  normalizedPrompt: compilation.normalized_prompt,
   confidence: compilation.confidence,
   contractVersion: compilation.contract_version,
   compiler: compilation.compiler,

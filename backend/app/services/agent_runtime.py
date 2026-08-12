@@ -29,7 +29,7 @@ from app.services.backtest_engine import run_backtest
 from app.services.backtest_persistence import persist_backtest
 from app.services.llm_provider import DeepSeekClient, ModelClient
 from app.services.market_data import get_daily_bar_models
-from app.services.strategy_compiler import compile_strategy
+from app.services.strategy_compiler import compile_strategy, ensure_compilation_executable
 from app.services.walk_forward import run_walk_forward
 from app.services.walk_forward_persistence import persist_walk_forward
 
@@ -38,6 +38,8 @@ SYSTEM_PROMPT = """你是 StonksUp 的量化研究编排 Agent。
 你的职责是理解用户目标、按需调用工具、检查证据并解释结果。
 所有收益、回撤、指标和样本外结果必须来自工具，禁止自行编造或计算。
 默认流程：编译策略、检查行情缓存、运行单次回测、运行样本外验证、给出结论；用户明确排除某一步时可跳过。
+compile_strategy 必须忠实处理用户原文，不得改写、删除或弱化任何交易条件。
+如果编译结果 executable=false，必须停止调用后续工具，逐条说明 issues，并请用户补充或改写策略。
 最终回答必须区分：计算事实、风险判断、仍需验证的限制。使用中文，简洁具体。
 如果工具返回错误，说明原因并尝试使用已有工具恢复，不得声称工具已经成功。
 """
@@ -48,13 +50,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "compile_strategy",
-            "description": "把用户的自然语言交易策略编译成可执行、可审计的策略契约。必须首先调用。",
+            "description": "把本次任务中的用户原始策略描述编译成可执行、可审计的策略契约。必须首先调用。",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "prompt": {"type": "string", "description": "需要编译的完整策略描述"}
-                },
-                "required": ["prompt"],
+                "properties": {},
+                "additionalProperties": False,
             },
         },
     },
@@ -123,21 +123,27 @@ def _compact_backtest(result) -> dict[str, Any]:
 
 def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "compile_strategy":
-        prompt = str(arguments.get("prompt") or context.request.prompt)
-        context.compilation = compile_strategy(CompileStrategyRequest(prompt=prompt))
+        context.compilation = compile_strategy(
+            CompileStrategyRequest(prompt=context.request.prompt)
+        )
         strategy = context.compilation.strategy
         context.run.symbol = strategy.symbol
         return {
             "contract_version": context.compilation.contract_version,
             "compiler": context.compilation.compiler,
+            "status": context.compilation.status,
+            "executable": context.compilation.executable,
             "confidence": context.compilation.confidence,
+            "normalized_prompt": context.compilation.normalized_prompt,
             "strategy": strategy.model_dump(mode="json"),
             "interpretation": context.compilation.interpretation,
             "assumptions": context.compilation.assumptions,
             "warnings": context.compilation.warnings,
+            "issues": [item.model_dump(mode="json") for item in context.compilation.issues],
         }
 
     compilation = _require_compilation(context)
+    ensure_compilation_executable(compilation)
     strategy = compilation.strategy
     data = context.request.data
     if name == "get_market_data_status":

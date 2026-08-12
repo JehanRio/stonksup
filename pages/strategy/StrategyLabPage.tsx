@@ -246,6 +246,7 @@ const StrategyLabPage: React.FC = () => {
   }, []);
 
   const busy = status === 'loading' || status === 'running';
+  const compilationBlocked = Boolean(compilation && !compilation.executable);
 
   const updateDefinition = <Key extends keyof StrategySpec>(
     key: Key,
@@ -356,6 +357,9 @@ const StrategyLabPage: React.FC = () => {
           setCompilation(nextCompilation);
           setDefinition(nextCompilation.strategy);
           setPromptDirty(false);
+          if (!nextCompilation.executable) {
+            throw new Error(nextCompilation.issues.map((item) => item.message).join(' '));
+          }
           runDefinition = nextCompilation.strategy;
         }
         setWalkForwardResult(
@@ -425,7 +429,7 @@ const StrategyLabPage: React.FC = () => {
             type="button"
             className="strategy-run-button"
             onClick={() => void handleRun()}
-            disabled={busy}
+            disabled={busy || compilationBlocked}
           >
             {busy ? <RefreshCw size={18} /> : <Play size={18} fill="currentColor" />}
             {busy
@@ -515,10 +519,30 @@ const StrategyLabPage: React.FC = () => {
               <ChevronRight size={18} />
             </button>
             {compilation ? (
-              <div className="strategy-compiler-meta">
-                <span>{compilation.compiler}</span>
-                <strong>{Math.round(compilation.confidence * 100)}% 解析置信度</strong>
-              </div>
+              <>
+                <div className={`strategy-compiler-meta is-${compilation.status}`}>
+                  <span>{compilation.compiler}</span>
+                  <strong>
+                    {compilation.status === 'ready'
+                      ? `可执行 · ${Math.round(compilation.confidence * 100)}%`
+                      : compilation.status === 'needs_clarification'
+                        ? '需要补充信息'
+                        : '包含不支持条件'}
+                  </strong>
+                </div>
+                <div className={`strategy-compilation-diagnostic is-${compilation.status}`}>
+                  <div>
+                    {compilation.executable ? <Sparkles size={17} /> : <CircleAlert size={17} />}
+                    <strong>{compilation.executable ? '语义检查通过' : '已阻止自动回测'}</strong>
+                  </div>
+                  {compilation.issues.map((issue) => (
+                    <p key={issue.code}>{issue.message}</p>
+                  ))}
+                  {compilation.executable && compilation.warnings.map((warning) => (
+                    <p key={warning} className="is-warning">{warning}</p>
+                  ))}
+                </div>
+              </>
             ) : (
               <div className="strategy-compiler-meta is-edited">
                 <span>MANUAL CONTRACT</span>

@@ -64,12 +64,23 @@ class CompileStrategyRequest(BaseModel):
     preferred_kind: StrategyKind | None = None
 
 
+class CompilationIssue(BaseModel):
+    code: str
+    severity: Literal["clarification", "unsupported"]
+    message: str
+    fragment: str | None = None
+
+
 class StrategyCompilation(BaseModel):
     prompt: str
     strategy: StrategySpec
+    status: Literal["ready", "needs_clarification", "unsupported"]
+    executable: bool
     interpretation: list[str]
     assumptions: list[str]
     warnings: list[str]
+    issues: list[CompilationIssue]
+    normalized_prompt: str
     confidence: float = Field(ge=0, le=1)
     contract_version: str
     compiler: str
