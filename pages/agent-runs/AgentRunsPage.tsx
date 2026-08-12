@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Activity,
   Bot,
@@ -147,7 +149,11 @@ const AgentRunsPage: React.FC = () => {
               </article>
               <article className="agent-conclusion-block">
                 <small>FINAL OUTPUT</small>
-                <p>{selected.finalOutput || selected.errorMessage || 'Agent 正在形成结论。'}</p>
+                <div className="agent-markdown-output">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {selected.finalOutput || selected.errorMessage || 'Agent 正在形成结论。'}
+                  </ReactMarkdown>
+                </div>
               </article>
             </>
           ) : (
@@ -156,7 +162,7 @@ const AgentRunsPage: React.FC = () => {
         </section>
 
         <aside className="agent-trace-panel">
-          <div className="agent-panel-title"><Wrench size={17} /><span>EXECUTION TRACE</span></div>
+          <div className="agent-panel-title"><Wrench size={17} /><span>TOOL EXECUTION TRACE</span></div>
           {selected?.steps.map((step) => {
             const call = selected.toolCalls.find((item) => item.sequence === step.sequence);
             return (
