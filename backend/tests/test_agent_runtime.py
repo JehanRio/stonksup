@@ -2,9 +2,15 @@ import json
 
 from app.db.session import create_session
 from app.schemas.agent_runs import CreateAgentRunRequest
+from app.schemas.agent_runs import ContinueAgentRunRequest
 from app.schemas.backtests import BacktestDataConfig
 from app.schemas.walk_forward import ParameterSearchConfig, WalkForwardConfig
-from app.services.agent_runtime import get_agent_run, get_agent_runs, run_quant_agent
+from app.services.agent_runtime import (
+    continue_quant_agent,
+    get_agent_run,
+    get_agent_runs,
+    run_quant_agent,
+)
 from app.services.llm_provider import ModelResponse, ModelUsage
 
 
@@ -113,6 +119,25 @@ class RewritingModelClient:
         )
 
 
+class CompileOnlyModelClient:
+    provider = "fake"
+    model = "fake-compile-only"
+
+    def complete(self, _messages, _tools) -> ModelResponse:
+        return ModelResponse(
+            content=None,
+            tool_calls=[
+                {
+                    "id": "call-compile",
+                    "type": "function",
+                    "function": {"name": "compile_strategy", "arguments": "{}"},
+                }
+            ],
+            finish_reason="tool_calls",
+            usage=ModelUsage(input_tokens=20, output_tokens=5),
+        )
+
+
 def test_quant_agent_calls_tools_and_persists_trace(client) -> None:
     request = CreateAgentRunRequest(
         prompt=(
@@ -191,8 +216,99 @@ def test_agent_uses_original_prompt_and_blocks_model_rewrite(client) -> None:
             client=RewritingModelClient(),
         )
 
-    compile_call, backtest_call = result.tool_calls
+    assert result.status == "unsupported"
+    assert result.current_step == "blocked"
+    assert result.tool_call_count == 1
+    compile_call = result.tool_calls[0]
     assert compile_call.result["data"]["status"] == "unsupported"
     assert compile_call.result["data"]["issues"][0]["code"] == "fundamental_data"
-    assert backtest_call.status == "failed"
-    assert "存在歧义" in backtest_call.error_message
+    assert "当前策略无法执行" in result.final_output
+
+
+def test_agent_requests_clarification_and_continues_with_answers(client) -> None:
+    request = CreateAgentRunRequest(
+        prompt="MU 回踩 EMA20 买入。",
+        data=BacktestDataConfig(mode="demo"),
+    )
+
+    with create_session(client.app.state.settings.database_url) as session:
+        pending = run_quant_agent(
+            session,
+            client.app.state.settings,
+            request,
+            client=CompileOnlyModelClient(),
+        )
+
+        assert pending.status == "needs_clarification"
+        assert pending.current_step == "awaiting_clarification"
+        assert pending.can_continue is True
+        assert pending.model_call_count == 1
+        assert pending.tool_call_count == 1
+        assert {item.code for item in pending.clarification_questions} == {
+            "exit_action_missing",
+            "exit_ema_missing",
+        }
+
+        continued = continue_quant_agent(
+            session,
+            client.app.state.settings,
+            pending.run_id,
+            ContinueAgentRunRequest(
+                answers={
+                    "exit_action_missing": "收盘跌破 EMA5 时卖出",
+                    "exit_ema_missing": "EMA5",
+                },
+                data=BacktestDataConfig(mode="demo"),
+                validation=WalkForwardConfig(
+                    train_bars=120,
+                    test_bars=40,
+                    search=ParameterSearchConfig(
+                        period_min=18,
+                        period_max=20,
+                        period_step=2,
+                        stop_loss_min=7,
+                        stop_loss_max=8,
+                        stop_loss_step=1,
+                        minimum_trades=0,
+                    ),
+                ),
+            ),
+            client=FakeModelClient(),
+        )
+
+    assert continued.status == "completed"
+    assert continued.can_continue is False
+    strategy = continued.tool_calls[0].result["data"]["strategy"]
+    assert strategy["entry_ema_period"] == 20
+    assert strategy["exit_ema_period"] == 5
+    assert "用户补充（exit_action_missing）" in continued.user_prompt
+
+
+def test_agent_rejects_incomplete_clarification_answers(client) -> None:
+    request = CreateAgentRunRequest(
+        prompt="MU 回踩 EMA20 买入。",
+        data=BacktestDataConfig(mode="demo"),
+    )
+
+    with create_session(client.app.state.settings.database_url) as session:
+        pending = run_quant_agent(
+            session,
+            client.app.state.settings,
+            request,
+            client=CompileOnlyModelClient(),
+        )
+        try:
+            continue_quant_agent(
+                session,
+                client.app.state.settings,
+                pending.run_id,
+                ContinueAgentRunRequest(
+                    answers={"exit_action_missing": "跌破 EMA5 卖出"},
+                    data=BacktestDataConfig(mode="demo"),
+                ),
+                client=FakeModelClient(),
+            )
+        except Exception as exc:
+            assert getattr(exc, "code", None) == "clarification_answers_missing"
+        else:
+            raise AssertionError("Missing clarification answer should be rejected")

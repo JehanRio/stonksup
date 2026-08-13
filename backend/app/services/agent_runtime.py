@@ -14,12 +14,14 @@ from app.core.config import Settings
 from app.core.errors import StonksUpError
 from app.models import AgentModelCall, AgentRun, AgentStep, AgentToolCall
 from app.schemas.agent_runs import (
+    AgentClarificationQuestion,
     AgentModelCallView,
     AgentRunDetail,
     AgentRunHistory,
     AgentRunSummary,
     AgentStepView,
     AgentToolCallView,
+    ContinueAgentRunRequest,
     CreateAgentRunRequest,
 )
 from app.schemas.backtests import CompileStrategyRequest, StrategyCompilation
@@ -85,6 +87,58 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+CLARIFICATION_COPY: dict[str, tuple[str, str]] = {
+    "symbol_missing": (
+        "你要回测哪个交易标的？",
+        "例如：MU、AAPL 或 QQQ",
+    ),
+    "entry_action_missing": (
+        "什么条件触发买入或进场？",
+        "例如：盘中触碰 EMA20 且收盘重新站稳后买入",
+    ),
+    "exit_action_missing": (
+        "什么条件触发卖出或离场？",
+        "例如：收盘跌破 EMA5 时卖出",
+    ),
+    "entry_ema_missing": (
+        "回踩哪一条 EMA 作为入场条件？",
+        "例如：EMA20",
+    ),
+    "exit_ema_missing": (
+        "跌破哪一条 EMA 作为离场条件？",
+        "例如：EMA5",
+    ),
+    "ma_periods_missing": (
+        "均线交叉使用哪两个周期？",
+        "例如：MA10 和 MA30",
+    ),
+    "ma_cross_actions_incomplete": (
+        "金叉和死叉分别执行什么动作？",
+        "例如：金叉买入，死叉卖出",
+    ),
+    "lookback_missing": (
+        "价格突破过去多少个交易日的最高价时进场？",
+        "例如：过去 20 个交易日",
+    ),
+    "breakout_exit_unsupported": (
+        "动量突破后使用什么离场规则？",
+        "当前支持：收盘跌破 MA20 时卖出",
+    ),
+    "rsi_period_missing": (
+        "RSI 使用多长周期？",
+        "例如：RSI14",
+    ),
+    "rsi_thresholds_missing": (
+        "RSI 低于多少买入，高于多少卖出？",
+        "例如：RSI14 低于 30 买入，高于 70 卖出",
+    ),
+    "template_conflict": (
+        "口述策略和所选模板冲突，请确认要使用哪一种策略？",
+        "请完整描述一种策略的入场和离场规则",
+    ),
+}
+
+
 @dataclass
 class _AgentContext:
     session: Session
@@ -92,6 +146,69 @@ class _AgentContext:
     request: CreateAgentRunRequest
     run: AgentRun
     compilation: StrategyCompilation | None = None
+
+
+def _clarification_questions(
+    compilation: StrategyCompilation,
+) -> list[AgentClarificationQuestion]:
+    questions: list[AgentClarificationQuestion] = []
+    for issue in compilation.issues:
+        if issue.severity != "clarification":
+            continue
+        question, hint = CLARIFICATION_COPY.get(
+            issue.code,
+            (issue.message, "请补充一条明确、可执行的规则"),
+        )
+        questions.append(
+            AgentClarificationQuestion(
+                code=issue.code,
+                question=question,
+                answer_hint=hint,
+            )
+        )
+    return questions
+
+
+def _compilation_report(compilation: StrategyCompilation) -> str:
+    if compilation.status == "needs_clarification":
+        questions = _clarification_questions(compilation)
+        lines = [
+            "## 需要你补充信息",
+            "",
+            "策略尚未达到可执行状态，因此没有调用行情、回测或样本外验证工具。",
+            "",
+        ]
+        lines.extend(
+            f"{index}. **{item.question}** 参考：{item.answer_hint}"
+            for index, item in enumerate(questions, start=1)
+        )
+        lines.extend(["", "补充后，Harness 会把原始描述与回答合并并重新编译。"])
+        return "\n".join(lines)
+
+    lines = [
+        "## 当前策略无法执行",
+        "",
+        "策略包含当前确定性回测引擎不支持的条件，已停止后续工具调用：",
+        "",
+    ]
+    lines.extend(
+        f"- **{issue.code}**：{issue.message}"
+        for issue in compilation.issues
+        if issue.severity == "unsupported"
+    )
+    lines.extend(["", "请删除这些条件，或改写为当前支持的四类策略之一。"])
+    return "\n".join(lines)
+
+
+def _compilation_payload(row: AgentRun) -> dict[str, Any] | None:
+    compile_call = next(
+        (item for item in row.tool_calls if item.tool_name == "compile_strategy"),
+        None,
+    )
+    if compile_call is None or not compile_call.result.get("success"):
+        return None
+    data = compile_call.result.get("data")
+    return data if isinstance(data, dict) else None
 
 
 def _require_compilation(context: _AgentContext) -> StrategyCompilation:
@@ -140,6 +257,10 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             "assumptions": context.compilation.assumptions,
             "warnings": context.compilation.warnings,
             "issues": [item.model_dump(mode="json") for item in context.compilation.issues],
+            "clarification_questions": [
+                item.model_dump(mode="json")
+                for item in _clarification_questions(context.compilation)
+            ],
         }
 
     compilation = _require_compilation(context)
@@ -231,6 +352,12 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
 
 
 def _summary(row: AgentRun) -> AgentRunSummary:
+    compilation = _compilation_payload(row)
+    questions = (
+        compilation.get("clarification_questions", [])
+        if compilation is not None
+        else []
+    )
     return AgentRunSummary(
         run_id=row.run_key,
         status=row.status,
@@ -246,6 +373,8 @@ def _summary(row: AgentRun) -> AgentRunSummary:
         step_count=len(row.steps),
         tool_call_count=len(row.tool_calls),
         model_call_count=len(row.model_calls),
+        clarification_questions=questions,
+        can_continue=row.status == "needs_clarification" and bool(questions),
     )
 
 
@@ -289,6 +418,55 @@ def get_agent_run(session: Session, run_key: str) -> AgentRunDetail:
     if row is None:
         raise StonksUpError("agent_run_not_found", "Agent run was not found.", status_code=404)
     return _detail(row)
+
+
+def continue_quant_agent(
+    session: Session,
+    settings: Settings,
+    run_key: str,
+    request: ContinueAgentRunRequest,
+    *,
+    client: ModelClient | None = None,
+) -> AgentRunDetail:
+    previous = _load_run(session, run_key)
+    if previous is None:
+        raise StonksUpError("agent_run_not_found", "Agent run was not found.", status_code=404)
+    compilation = _compilation_payload(previous)
+    questions = compilation.get("clarification_questions", []) if compilation else []
+    if previous.status != "needs_clarification" or not questions:
+        raise StonksUpError(
+            "agent_run_not_awaiting_clarification",
+            "This agent run is not waiting for clarification.",
+            status_code=409,
+        )
+
+    cleaned_answers = {
+        code: answer.strip()
+        for code, answer in request.answers.items()
+        if answer.strip()
+    }
+    required_codes = [str(item["code"]) for item in questions]
+    missing = [code for code in required_codes if code not in cleaned_answers]
+    if missing:
+        raise StonksUpError(
+            "clarification_answers_missing",
+            "Please answer every clarification question before continuing.",
+            status_code=422,
+            details={"missing_codes": missing},
+        )
+
+    additions = "\n".join(
+        f"- 用户补充（{code}）：{cleaned_answers[code]}"
+        for code in required_codes
+    )
+    combined_prompt = f"{previous.user_prompt.rstrip()}\n\n{additions}"
+    follow_up = CreateAgentRunRequest(
+        prompt=combined_prompt,
+        data=request.data,
+        config=request.config,
+        validation=request.validation,
+    )
+    return run_quant_agent(session, settings, follow_up, client=client)
 
 
 def run_quant_agent(
@@ -430,7 +608,27 @@ def run_quant_agent(
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }
                 )
+                if (
+                    name == "compile_strategy"
+                    and context.compilation is not None
+                    and not context.compilation.executable
+                ):
+                    break
             session.commit()
+
+            if context.compilation is not None and not context.compilation.executable:
+                run.status = context.compilation.status
+                run.current_step = (
+                    "awaiting_clarification"
+                    if context.compilation.status == "needs_clarification"
+                    else "blocked"
+                )
+                run.final_output = _compilation_report(context.compilation)
+                run.completed_at = datetime.now(UTC)
+                session.commit()
+                loaded = _load_run(session, run.run_key)
+                assert loaded is not None
+                return _detail(loaded)
 
         raise ValueError("Agent exceeded the maximum number of model turns")
     except Exception as exc:

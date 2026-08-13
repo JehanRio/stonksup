@@ -18,6 +18,21 @@ class CreateAgentRunRequest(BaseModel):
     validation: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
 
 
+class ContinueAgentRunRequest(BaseModel):
+    answers: dict[str, str] = Field(min_length=1)
+    data: BacktestDataConfig = Field(
+        default_factory=lambda: BacktestDataConfig(mode="real")
+    )
+    config: BacktestConfig = Field(default_factory=BacktestConfig)
+    validation: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
+
+
+class AgentClarificationQuestion(BaseModel):
+    code: str
+    question: str
+    answer_hint: str
+
+
 class AgentCapability(BaseModel):
     provider: Literal["deepseek"] = "deepseek"
     configured: bool
@@ -77,6 +92,8 @@ class AgentRunSummary(BaseModel):
     step_count: int
     tool_call_count: int
     model_call_count: int
+    clarification_questions: list[AgentClarificationQuestion] = Field(default_factory=list)
+    can_continue: bool = False
 
 
 class AgentRunDetail(AgentRunSummary):

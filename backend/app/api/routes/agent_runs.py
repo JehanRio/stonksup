@@ -7,10 +7,17 @@ from app.schemas.agent_runs import (
     AgentCapability,
     AgentRunDetail,
     AgentRunHistory,
+    ContinueAgentRunRequest,
     CreateAgentRunRequest,
 )
 from app.schemas.common import ApiResponse
-from app.services.agent_runtime import TOOLS, get_agent_run, get_agent_runs, run_quant_agent
+from app.services.agent_runtime import (
+    TOOLS,
+    continue_quant_agent,
+    get_agent_run,
+    get_agent_runs,
+    run_quant_agent,
+)
 
 
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"])
@@ -66,3 +73,17 @@ def create_agent_run(
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[AgentRunDetail]:
     return success_response(request, run_quant_agent(session, settings, payload))
+
+
+@router.post("/{run_id}/continue", response_model=ApiResponse[AgentRunDetail])
+def continue_agent_run(
+    run_id: str,
+    payload: ContinueAgentRunRequest,
+    request: Request,
+    settings: Settings = Depends(get_app_settings),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[AgentRunDetail]:
+    return success_response(
+        request,
+        continue_quant_agent(session, settings, run_id, payload),
+    )

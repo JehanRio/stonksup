@@ -57,6 +57,14 @@ export type AgentRunSummary = {
   stepCount: number;
   toolCallCount: number;
   modelCallCount: number;
+  clarificationQuestions: AgentClarificationQuestion[];
+  canContinue: boolean;
+};
+
+export type AgentClarificationQuestion = {
+  code: string;
+  question: string;
+  answerHint: string;
 };
 
 export type AgentRunDetail = AgentRunSummary & {
@@ -113,6 +121,12 @@ const mapSummary = (run: any): AgentRunSummary => ({
   stepCount: run.step_count,
   toolCallCount: run.tool_call_count,
   modelCallCount: run.model_call_count,
+  clarificationQuestions: (run.clarification_questions || []).map((item: any) => ({
+    code: item.code,
+    question: item.question,
+    answerHint: item.answer_hint,
+  })),
+  canContinue: Boolean(run.can_continue),
 });
 
 const mapDetail = (run: any): AgentRunDetail => ({
@@ -169,14 +183,23 @@ export const createAgentRun = async (prompt: string) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
-      data: {
-        mode: 'real',
-        provider: 'twelvedata',
-        adjustment: 'all',
-        benchmark_symbol: 'SPY',
-        start_date: new Date(new Date().setFullYear(new Date().getFullYear() - 5)).toISOString().slice(0, 10),
-        end_date: new Date().toISOString().slice(0, 10),
-        refresh: false,
-      },
+      data: defaultDataConfig(),
     }),
+  }));
+
+const defaultDataConfig = () => ({
+  mode: 'real',
+  provider: 'twelvedata',
+  adjustment: 'all',
+  benchmark_symbol: 'SPY',
+  start_date: new Date(new Date().setFullYear(new Date().getFullYear() - 5)).toISOString().slice(0, 10),
+  end_date: new Date().toISOString().slice(0, 10),
+  refresh: false,
+});
+
+export const continueAgentRun = async (runId: string, answers: Record<string, string>) =>
+  mapDetail(await request<any>(`/api/v1/agent-runs/${runId}/continue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers, data: defaultDataConfig() }),
   }));

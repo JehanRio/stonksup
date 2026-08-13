@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
   Database,
   Play,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
 
 import {
   createAgentRun,
+  continueAgentRun,
   getAgentCapability,
   getAgentRun,
   getAgentRuns,
@@ -41,6 +43,7 @@ const AgentRunsPage: React.FC = () => {
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
 
   const refresh = async () => {
@@ -71,6 +74,7 @@ const AgentRunsPage: React.FC = () => {
     try {
       const run = await createAgentRun(prompt.trim());
       setSelected(run);
+      setClarificationAnswers({});
       setRuns(await getAgentRuns());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Agent 运行失败');
@@ -82,8 +86,32 @@ const AgentRunsPage: React.FC = () => {
   const openRun = async (runId: string) => {
     try {
       setSelected(await getAgentRun(runId));
+      setClarificationAnswers({});
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '无法打开运行记录');
+    }
+  };
+
+  const handleContinue = async () => {
+    if (!selected?.canContinue) return;
+    const complete = selected.clarificationQuestions.every(
+      (item) => clarificationAnswers[item.code]?.trim(),
+    );
+    if (!complete) {
+      setError('请先回答全部澄清问题。');
+      return;
+    }
+    setRunning(true);
+    setError('');
+    try {
+      const run = await continueAgentRun(selected.runId, clarificationAnswers);
+      setSelected(run);
+      setClarificationAnswers({});
+      setRuns(await getAgentRuns());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '无法继续 Agent 任务');
+    } finally {
+      setRunning(false);
     }
   };
 
@@ -155,6 +183,43 @@ const AgentRunsPage: React.FC = () => {
                   </ReactMarkdown>
                 </div>
               </article>
+              {selected.canContinue && (
+                <section className="agent-clarification-panel">
+                  <div className="agent-clarification-heading">
+                    <CircleHelp size={20} />
+                    <span>
+                      <small>CLARIFICATION REQUIRED</small>
+                      <strong>补全策略后继续同一次研究</strong>
+                    </span>
+                  </div>
+                  <div className="agent-clarification-questions">
+                    {selected.clarificationQuestions.map((item, index) => (
+                      <label key={item.code}>
+                        <span><b>{String(index + 1).padStart(2, '0')}</b>{item.question}</span>
+                        <input
+                          type="text"
+                          value={clarificationAnswers[item.code] || ''}
+                          placeholder={item.answerHint}
+                          onChange={(event) => setClarificationAnswers((current) => ({
+                            ...current,
+                            [item.code]: event.target.value,
+                          }))}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleContinue()}
+                    disabled={running || selected.clarificationQuestions.some(
+                      (item) => !clarificationAnswers[item.code]?.trim(),
+                    )}
+                  >
+                    {running ? <RefreshCw className="is-spinning" size={18} /> : <Play size={18} fill="currentColor" />}
+                    {running ? '正在重新编译' : '提交补充并继续'}
+                  </button>
+                </section>
+              )}
             </>
           ) : (
             <div className="agent-no-selection"><Bot size={34} /><p>创建或选择一次 Agent Run 查看研究结论。</p></div>

@@ -15,6 +15,12 @@ Turn a natural-language research request into a reproducible quantitative workfl
 7. The model summarizes computed facts, risk judgment, and remaining limitations.
 8. Every model turn, tool call, step status, duration, result, and failure is stored.
 
+When compilation returns `needs_clarification`, the runtime stops immediately
+and derives deterministic questions from the compiler issue codes. The user can
+answer those questions in `Agent Runs`; the original prompt and answers are
+combined into a new auditable run and compiled again. Unsupported conditions
+remain terminal and cannot use the continuation endpoint.
+
 The model does not calculate returns or invent backtest metrics. It only plans, calls tools, and explains tool outputs.
 
 ## Strategy Contract v0.4
@@ -37,6 +43,8 @@ silently discarded.
 
 - `GET /api/v1/agent-runs/capabilities`: provider configuration and available tools.
 - `POST /api/v1/agent-runs`: execute a research task.
+- `POST /api/v1/agent-runs/{run_id}/continue`: answer every pending
+  clarification question and create a new auditable run.
 - `GET /api/v1/agent-runs`: list persisted runs.
 - `GET /api/v1/agent-runs/{run_id}`: inspect the complete execution trace.
 
