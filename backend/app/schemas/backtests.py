@@ -9,6 +9,7 @@ from app.schemas.market_data import (
     PriceAdjustment,
     default_start_date,
 )
+from app.schemas.strategy_ir import StrategyIR, StrategyManifest
 
 
 class StrategyKind(str, Enum):
@@ -84,6 +85,8 @@ class StrategyCompilation(BaseModel):
     confidence: float = Field(ge=0, le=1)
     contract_version: str
     compiler: str
+    strategy_ir: StrategyIR
+    manifest: StrategyManifest
 
 
 class BacktestConfig(BaseModel):

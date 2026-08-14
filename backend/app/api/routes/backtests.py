@@ -18,6 +18,7 @@ from app.schemas.backtests import (
     StrategyCompilation,
 )
 from app.schemas.common import ApiResponse
+from app.schemas.strategy_ir import StrategyIR
 from app.schemas.walk_forward import RunWalkForwardRequest, WalkForwardResult
 from app.services.backtest_analysis import enrich_backtest_result
 from app.services.backtest_data import apply_data_provenance, load_backtest_data
@@ -59,6 +60,7 @@ def _execute_backtest(
     config,
     data,
     bars: int,
+    strategy_ir: StrategyIR | None = None,
 ) -> BacktestResult:
     loaded = load_backtest_data(
         session,
@@ -67,7 +69,7 @@ def _execute_backtest(
         data,
         bars,
     )
-    result = run_backtest(loaded.rows, strategy, config)
+    result = run_backtest(loaded.rows, strategy, config, strategy_ir=strategy_ir)
     result = enrich_backtest_result(result, loaded, config)
     return apply_data_provenance(result, loaded)
 
@@ -153,6 +155,7 @@ def compile_and_run_strategy(
         config=payload.config,
         data=payload.data,
         bars=payload.bars,
+        strategy_ir=compilation.strategy_ir,
     )
     persist_backtest(
         session,

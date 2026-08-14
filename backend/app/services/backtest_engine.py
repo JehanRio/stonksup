@@ -12,13 +12,24 @@ from app.schemas.backtests import (
     BacktestResult,
     BacktestTrade,
     EquityPoint,
-    StrategyKind,
     StrategySpec,
 )
+from app.schemas.strategy_ir import (
+    ConditionGroup,
+    IndicatorSpec,
+    StrategyCondition,
+    StrategyIR,
+    StrategyOperand,
+)
 from app.services.strategy_compiler import CONTRACT_VERSION
+from app.services.strategy_ir import (
+    build_strategy_ir,
+    build_strategy_manifest,
+    strategy_ir_hash,
+)
 
 
-ENGINE_NAME = "stonksup-deterministic-engine.v1"
+ENGINE_NAME = "stonksup-strategy-ir-engine.v2"
 DATA_SOURCE = "seeded-daily-regimes.demo-v2"
 LAST_MARKET_DATE = date(2026, 7, 24)
 
@@ -117,39 +128,54 @@ def create_seeded_daily_history(symbol: str, count: int) -> list[Bar]:
     return rows
 
 
-def _sma(rows: list[Bar], period: int) -> list[float | None]:
+def _sma(
+    rows: list[Bar],
+    period: int,
+    source: str = "close",
+) -> list[float | None]:
     values: list[float | None] = []
     rolling_sum = 0.0
     for index, row in enumerate(rows):
-        rolling_sum += row.close
+        rolling_sum += float(getattr(row, source))
         if index >= period:
-            rolling_sum -= rows[index - period].close
+            rolling_sum -= float(getattr(rows[index - period], source))
         values.append(rolling_sum / period if index >= period - 1 else None)
     return values
 
 
-def _ema(rows: list[Bar], period: int) -> list[float | None]:
+def _ema(
+    rows: list[Bar],
+    period: int,
+    source: str = "close",
+) -> list[float | None]:
     values: list[float | None] = [None] * len(rows)
     if len(rows) < period:
         return values
 
-    seed_value = sum(row.close for row in rows[:period]) / period
+    seed_value = sum(float(getattr(row, source)) for row in rows[:period]) / period
     values[period - 1] = seed_value
     multiplier = 2 / (period + 1)
     previous = seed_value
     for index in range(period, len(rows)):
-        previous = (rows[index].close - previous) * multiplier + previous
+        current = float(getattr(rows[index], source))
+        previous = (current - previous) * multiplier + previous
         values[index] = previous
     return values
 
 
-def _rsi(rows: list[Bar], period: int) -> list[float | None]:
+def _rsi(
+    rows: list[Bar],
+    period: int,
+    source: str = "close",
+) -> list[float | None]:
     values: list[float | None] = [None] * len(rows)
     for index in range(period, len(rows)):
         gains = 0.0
         losses = 0.0
         for cursor in range(index - period + 1, index + 1):
-            change = rows[cursor].close - rows[cursor - 1].close
+            current = float(getattr(rows[cursor], source))
+            previous = float(getattr(rows[cursor - 1], source))
+            change = current - previous
             if change >= 0:
                 gains += change
             else:
@@ -158,15 +184,103 @@ def _rsi(rows: list[Bar], period: int) -> list[float | None]:
     return values
 
 
+def _rolling_max(
+    rows: list[Bar],
+    period: int,
+    source: str,
+) -> list[float | None]:
+    values: list[float | None] = [None] * len(rows)
+    for index in range(period - 1, len(rows)):
+        values[index] = max(
+            float(getattr(row, source)) for row in rows[index - period + 1 : index + 1]
+        )
+    return values
+
+
+def _indicator_series(
+    rows: list[Bar],
+    indicator: IndicatorSpec,
+) -> list[float | None]:
+    if indicator.kind == "ema":
+        return _ema(rows, indicator.period, indicator.source)
+    if indicator.kind == "sma":
+        return _sma(rows, indicator.period, indicator.source)
+    if indicator.kind == "rsi":
+        return _rsi(rows, indicator.period, indicator.source)
+    return _rolling_max(rows, indicator.period, indicator.source)
+
+
+def _operand_value(
+    rows: list[Bar],
+    indicators: dict[str, list[float | None]],
+    operand: StrategyOperand,
+    index: int,
+) -> float | None:
+    if operand.source == "constant":
+        return operand.value
+    target_index = index + operand.offset
+    if target_index < 0 or target_index >= len(rows) or operand.key is None:
+        return None
+    if operand.source == "field":
+        return float(getattr(rows[target_index], operand.key))
+    return indicators[operand.key][target_index]
+
+
+def _evaluate_condition(
+    rows: list[Bar],
+    indicators: dict[str, list[float | None]],
+    condition: StrategyCondition,
+    index: int,
+) -> bool:
+    left = _operand_value(rows, indicators, condition.left, index)
+    right = _operand_value(rows, indicators, condition.right, index)
+    if left is None or right is None:
+        return False
+
+    if condition.operator in {"crosses_above", "crosses_below"}:
+        previous_left = _operand_value(rows, indicators, condition.left, index - 1)
+        previous_right = _operand_value(rows, indicators, condition.right, index - 1)
+        if previous_left is None or previous_right is None:
+            return False
+        if condition.operator == "crosses_above":
+            return previous_left <= previous_right and left > right
+        return previous_left >= previous_right and left < right
+
+    tolerance = condition.tolerance_bps / 10_000
+    if condition.operator in {"lt", "lte"}:
+        right *= 1 + tolerance
+    elif condition.operator in {"gt", "gte"}:
+        right *= 1 - tolerance
+    return {
+        "lt": left < right,
+        "lte": left <= right,
+        "gt": left > right,
+        "gte": left >= right,
+    }[condition.operator]
+
+
+def _evaluate_group(
+    rows: list[Bar],
+    indicators: dict[str, list[float | None]],
+    group: ConditionGroup,
+    index: int,
+) -> bool:
+    matches = (
+        _evaluate_condition(rows, indicators, condition, index)
+        for condition in group.conditions
+    )
+    return all(matches) if group.mode == "all" else any(matches)
+
+
 def _strategy_hash(
-    strategy: StrategySpec,
+    strategy_ir: StrategyIR,
     config: BacktestConfig,
     first_date: date,
     last_date: date,
 ) -> str:
     payload = "|".join(
         [
-            strategy.model_dump_json(),
+            strategy_ir_hash(strategy_ir),
             config.model_dump_json(),
             first_date.isoformat(),
             last_date.isoformat(),
@@ -181,6 +295,7 @@ def run_backtest(
     strategy: StrategySpec,
     config: BacktestConfig,
     *,
+    strategy_ir: StrategyIR | None = None,
     trade_start_date: date | None = None,
 ) -> BacktestResult:
     if len(rows) < 120:
@@ -199,14 +314,16 @@ def run_backtest(
         if evaluation_start_index < 0 or len(rows) - evaluation_start_index < 2:
             raise ValueError("Backtest evaluation window requires at least two bars")
 
+    executable_ir = strategy_ir or build_strategy_ir(strategy)
+    if executable_ir.symbol != strategy.symbol.strip().upper():
+        raise ValueError("Strategy IR symbol must match the strategy specification")
+    manifest = build_strategy_manifest(executable_ir)
+    indicator_values = {
+        indicator.id: _indicator_series(rows, indicator)
+        for indicator in executable_ir.indicators
+    }
     commission_rate = config.commission_bps / 10_000
     slippage_rate = config.slippage_bps / 10_000
-    entry_ema_values = _ema(rows, strategy.entry_ema_period)
-    exit_ema_values = _ema(rows, strategy.exit_ema_period)
-    fast_sma = _sma(rows, strategy.fast_period)
-    slow_sma = _sma(rows, strategy.slow_period)
-    exit_sma = _sma(rows, 20)
-    rsi_values = _rsi(rows, strategy.rsi_period)
 
     cash = config.initial_capital
     position = Position()
@@ -252,7 +369,7 @@ def run_backtest(
 
         if pending and pending.side == "buy" and position.quantity == 0:
             execution_price = row.open * (1 + slippage_rate)
-            budget = cash * strategy.allocation_percent / 100
+            budget = cash * executable_ir.sizing.value
             quantity = math.floor(budget / (execution_price * (1 + commission_rate)))
             if quantity > 0:
                 cost = quantity * execution_price
@@ -269,8 +386,10 @@ def run_backtest(
         pending = None
 
         stopped_out = False
-        if position.quantity > 0 and strategy.stop_loss_percent > 0:
-            stop_price = position.entry_price * (1 - strategy.stop_loss_percent / 100)
+        if position.quantity > 0 and executable_ir.risk.stop_loss_percent > 0:
+            stop_price = position.entry_price * (
+                1 - executable_ir.risk.stop_loss_percent / 100
+            )
             if row.low <= stop_price:
                 close_position(row, min(row.open, stop_price), "protective_stop")
                 stopped_out = True
@@ -289,75 +408,20 @@ def run_backtest(
         if stopped_out or index == len(rows) - 1:
             continue
 
-        previous_row = rows[index - 1] if index else None
-        if strategy.kind == StrategyKind.EMA_PULLBACK:
-            current_entry_ema = entry_ema_values[index]
-            previous_entry_ema = entry_ema_values[index - 1] if index else None
-            current_exit_ema = exit_ema_values[index]
-            previous_exit_ema = exit_ema_values[index - 1] if index else None
-            if (
-                current_entry_ema is None
-                or previous_entry_ema is None
-                or current_exit_ema is None
-                or previous_exit_ema is None
-                or previous_row is None
-            ):
-                continue
-            tolerance = strategy.touch_tolerance_bps / 10_000
-            touched_ema = row.low <= current_entry_ema * (1 + tolerance)
-            held_ema = row.close >= current_entry_ema
-            approached_from_above = previous_row.close > previous_entry_ema
-            if (
-                position.quantity == 0
-                and approached_from_above
-                and touched_ema
-                and held_ema
-            ):
-                pending = PendingOrder("buy", "ema_pullback_hold")
-            elif (
-                position.quantity > 0
-                and previous_row.close >= previous_exit_ema
-                and row.close < current_exit_ema
-            ):
-                pending = PendingOrder("sell", "ema_close_cross_down")
-            continue
-
-        if strategy.kind == StrategyKind.MA_CROSSOVER:
-            fast = fast_sma[index]
-            slow = slow_sma[index]
-            previous_fast = fast_sma[index - 1] if index else None
-            previous_slow = slow_sma[index - 1] if index else None
-            if None in (fast, slow, previous_fast, previous_slow):
-                continue
-            if position.quantity == 0 and previous_fast <= previous_slow and fast > slow:
-                pending = PendingOrder("buy", "ma_cross_up")
-            elif position.quantity > 0 and previous_fast >= previous_slow and fast < slow:
-                pending = PendingOrder("sell", "ma_cross_down")
-            continue
-
-        if strategy.kind == StrategyKind.MOMENTUM_BREAKOUT:
-            if index < strategy.lookback_period:
-                continue
-            previous_high = max(
-                item.high for item in rows[index - strategy.lookback_period : index]
-            )
-            if position.quantity == 0 and row.close > previous_high:
-                pending = PendingOrder("buy", "momentum_breakout")
-            elif (
-                position.quantity > 0
-                and exit_sma[index] is not None
-                and row.close < exit_sma[index]
-            ):
-                pending = PendingOrder("sell", "trend_exit")
-            continue
-
-        current_rsi = rsi_values[index]
-        if current_rsi is None:
-            continue
-        if position.quantity == 0 and current_rsi < strategy.rsi_entry:
-            pending = PendingOrder("buy", "rsi_oversold")
-        elif position.quantity > 0 and current_rsi > strategy.rsi_exit:
-            pending = PendingOrder("sell", "rsi_reversion")
+        if position.quantity == 0 and _evaluate_group(
+            rows,
+            indicator_values,
+            executable_ir.entry.when,
+            index,
+        ):
+            pending = PendingOrder("buy", executable_ir.entry.reason)
+        elif position.quantity > 0 and _evaluate_group(
+            rows,
+            indicator_values,
+            executable_ir.exit.when,
+            index,
+        ):
+            pending = PendingOrder("sell", executable_ir.exit.reason)
 
     last_row = rows[-1]
     if position.quantity > 0:
@@ -389,7 +453,7 @@ def run_backtest(
     )
 
     return BacktestResult(
-        run_id=f"BT-{_strategy_hash(strategy, config, rows[evaluation_start_index].trading_date, last_row.trading_date)}",
+        run_id=f"BT-{_strategy_hash(executable_ir, config, rows[evaluation_start_index].trading_date, last_row.trading_date)}",
         symbol=strategy.symbol,
         strategy_name=strategy.name,
         bars=len(equity_curve),
@@ -425,6 +489,8 @@ def run_backtest(
             "Seeded demo data is deterministic and must not be treated as investable evidence.",
         ],
         audit=[
+            f"PASS: validated Strategy IR {manifest.ir_hash[:12]} with {len(executable_ir.indicators)} indicator dependencies.",
+            f"PASS: manifest declares {manifest.warmup_bars} warm-up bars and fields {', '.join(manifest.required_fields)}.",
             "PASS: no future bars are available to signal calculations.",
             "PASS: signal generation and order execution occur on different sessions.",
             "PASS: identical strategy, configuration, and data produce the same run ID.",

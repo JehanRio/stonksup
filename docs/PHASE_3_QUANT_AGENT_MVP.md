@@ -8,7 +8,7 @@ Turn a natural-language research request into a reproducible quantitative workfl
 
 1. The user submits a research objective in `Agent Runs`.
 2. DeepSeek receives the system policy and the available tool schemas.
-3. `compile_strategy` converts the unmodified user request into Strategy Contract v0.4.
+3. `compile_strategy` converts the unmodified user request into Strategy IR v1 and a dependency manifest.
 4. `get_market_data_status` reports persistent market-data coverage.
 5. `run_backtest` executes the deterministic backtest engine.
 6. `run_walk_forward` performs rolling out-of-sample validation and parameter search.
@@ -23,15 +23,42 @@ remain terminal and cannot use the continuation endpoint.
 
 The model does not calculate returns or invent backtest metrics. It only plans, calls tools, and explains tool outputs.
 
-## Strategy Contract v0.4
+## Strategy IR v1
 
-EMA pullback strategies now support independent entry and exit periods:
+The compiler now produces two representations:
+
+- `StrategySpec`: the compatibility parameter model used by the current form and stored experiments.
+- `StrategyIR`: the executable, auditable rule graph consumed by the backtest engine.
+
+`StrategyIR` declares indicators, typed operands, comparison operators, `all`/`any`
+condition groups, entry and exit rules, position sizing, risk controls, and execution
+timing. The four existing templates only translate parameters into IR; the backtest
+engine evaluates the same generic condition graph for every template.
+
+The accompanying `StrategyManifest` contains the canonical IR hash, OHLCV field
+dependencies, indicator IDs, maximum lookback, required warm-up bars, execution
+timing, direction, and look-ahead safety assertion. The IR hash is included in the
+run audit so a result can be traced back to its exact executable definition.
+
+EMA pullback strategies retain independent entry and exit periods:
 
 - `entry_ema_period`: the EMA used by the entry condition.
 - `exit_ema_period`: the EMA used by the exit condition.
 - `ema_period`: retained as a compatibility alias for older stored requests.
 
 Example: `回踩 EMA20 买入，跌破 EMA5 卖出` compiles to an entry EMA of 20 and an exit EMA of 5.
+
+The execution path is now:
+
+```text
+Natural language -> StrategySpec -> Strategy IR v1 -> Manifest validation
+                 -> indicator graph -> condition interpreter -> orders -> metrics
+```
+
+This intentionally avoids executing arbitrary model-generated Python. Future
+indicator and condition families extend the typed IR and deterministic interpreter;
+an optional Python export can be added later as a derived artifact, not as the source
+of truth.
 
 The compiler is fail-closed. It emits `ready`, `needs_clarification`, or
 `unsupported`, plus machine-readable issues. Only `ready` contracts may reach
@@ -67,6 +94,8 @@ Never commit API keys. A key pasted into chat, an issue, or logs must be revoked
 - A user can describe a supported strategy in Chinese.
 - The agent invokes all four approved tools and returns a grounded conclusion.
 - Entry and exit EMA periods remain distinct throughout compilation and execution.
+- Compilation exposes Strategy IR v1 and a reproducible manifest fingerprint.
+- All four strategy templates execute through the shared condition interpreter.
 - Backtest and walk-forward records are persisted by the existing research engines.
 - Agent runs remain inspectable after a restart.
 - Failed or malformed tool calls are visible in the execution trace.
@@ -74,7 +103,7 @@ Never commit API keys. A key pasted into chat, an issue, or logs must be revoked
 
 ## Known boundaries
 
-- The deterministic compiler currently supports the four existing strategy families and their current grammar.
+- The deterministic compiler currently supports the four existing strategy families and their current grammar; IR groups support `all` and `any`, while nested groups and mixed-family natural-language composition remain future work.
 - Agent execution is synchronous and does not yet support cancellation or background progress streaming.
 - Tool permissions are static; per-user authorization and portfolio-level limits are future work.
 - A provider-side model evaluation is required after a fresh DeepSeek key is configured.

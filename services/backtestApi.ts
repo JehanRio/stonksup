@@ -28,6 +28,72 @@ export type StrategySpec = {
   longOnly: true;
 };
 
+export type StrategyIrOperand = {
+  source: 'field' | 'indicator' | 'constant';
+  key: string | null;
+  value: number | null;
+  offset: -1 | 0;
+};
+
+export type StrategyIrCondition = {
+  left: StrategyIrOperand;
+  operator: 'lt' | 'lte' | 'gt' | 'gte' | 'crosses_above' | 'crosses_below';
+  right: StrategyIrOperand;
+  toleranceBps: number;
+};
+
+export type StrategyIrRule = {
+  reason: string;
+  when: {
+    mode: 'all' | 'any';
+    conditions: StrategyIrCondition[];
+  };
+};
+
+export type StrategyIR = {
+  version: 'strategy-ir.v1';
+  name: string;
+  symbol: string;
+  timeframe: '1d';
+  template: StrategyKind;
+  indicators: Array<{
+    id: string;
+    kind: 'ema' | 'sma' | 'rsi' | 'rolling_max';
+    source: 'open' | 'high' | 'low' | 'close' | 'volume';
+    period: number;
+  }>;
+  entry: StrategyIrRule;
+  exit: StrategyIrRule;
+  sizing: {
+    mode: 'target_cash_fraction';
+    value: number;
+  };
+  risk: {
+    stopLossPercent: number;
+  };
+  execution: {
+    signalAt: 'close';
+    fillAt: 'next_open';
+    direction: 'long_only';
+    maxPositions: 1;
+  };
+};
+
+export type StrategyManifest = {
+  version: 'strategy-manifest.v1';
+  irHash: string;
+  symbol: string;
+  timeframe: '1d';
+  requiredFields: string[];
+  indicatorIds: string[];
+  warmupBars: number;
+  maxLookback: number;
+  signalAt: 'close';
+  fillAt: 'next_open';
+  direction: 'long_only';
+  lookaheadSafe: true;
+};
+
 export type StrategyCompilation = {
   prompt: string;
   strategy: StrategySpec;
@@ -46,6 +112,8 @@ export type StrategyCompilation = {
   confidence: number;
   contractVersion: string;
   compiler: string;
+  strategyIr: StrategyIR;
+  manifest: StrategyManifest;
 };
 
 export type BacktestConfig = {
@@ -204,6 +272,19 @@ type ApiStrategySpec = {
   long_only: true;
 };
 
+type ApiStrategyIrRule = {
+  reason: string;
+  when: {
+    mode: 'all' | 'any';
+    conditions: Array<{
+      left: StrategyIrOperand;
+      operator: StrategyIrCondition['operator'];
+      right: StrategyIrOperand;
+      tolerance_bps: number;
+    }>;
+  };
+};
+
 type ApiCompilation = {
   prompt: string;
   strategy: ApiStrategySpec;
@@ -222,6 +303,38 @@ type ApiCompilation = {
   confidence: number;
   contract_version: string;
   compiler: string;
+  strategy_ir: {
+    version: 'strategy-ir.v1';
+    name: string;
+    symbol: string;
+    timeframe: '1d';
+    template: StrategyKind;
+    indicators: StrategyIR['indicators'];
+    entry: ApiStrategyIrRule;
+    exit: ApiStrategyIrRule;
+    sizing: StrategyIR['sizing'];
+    risk: { stop_loss_percent: number };
+    execution: {
+      signal_at: 'close';
+      fill_at: 'next_open';
+      direction: 'long_only';
+      max_positions: 1;
+    };
+  };
+  manifest: {
+    version: 'strategy-manifest.v1';
+    ir_hash: string;
+    symbol: string;
+    timeframe: '1d';
+    required_fields: string[];
+    indicator_ids: string[];
+    warmup_bars: number;
+    max_lookback: number;
+    signal_at: 'close';
+    fill_at: 'next_open';
+    direction: 'long_only';
+    lookahead_safe: true;
+  };
 };
 
 type ApiDataQuality = {
@@ -425,6 +538,52 @@ const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
   confidence: compilation.confidence,
   contractVersion: compilation.contract_version,
   compiler: compilation.compiler,
+  strategyIr: {
+    ...compilation.strategy_ir,
+    entry: {
+      ...compilation.strategy_ir.entry,
+      when: {
+        ...compilation.strategy_ir.entry.when,
+        conditions: compilation.strategy_ir.entry.when.conditions.map((condition) => ({
+          ...condition,
+          toleranceBps: condition.tolerance_bps,
+        })),
+      },
+    },
+    exit: {
+      ...compilation.strategy_ir.exit,
+      when: {
+        ...compilation.strategy_ir.exit.when,
+        conditions: compilation.strategy_ir.exit.when.conditions.map((condition) => ({
+          ...condition,
+          toleranceBps: condition.tolerance_bps,
+        })),
+      },
+    },
+    risk: {
+      stopLossPercent: compilation.strategy_ir.risk.stop_loss_percent,
+    },
+    execution: {
+      signalAt: compilation.strategy_ir.execution.signal_at,
+      fillAt: compilation.strategy_ir.execution.fill_at,
+      direction: compilation.strategy_ir.execution.direction,
+      maxPositions: compilation.strategy_ir.execution.max_positions,
+    },
+  },
+  manifest: {
+    version: compilation.manifest.version,
+    irHash: compilation.manifest.ir_hash,
+    symbol: compilation.manifest.symbol,
+    timeframe: compilation.manifest.timeframe,
+    requiredFields: compilation.manifest.required_fields,
+    indicatorIds: compilation.manifest.indicator_ids,
+    warmupBars: compilation.manifest.warmup_bars,
+    maxLookback: compilation.manifest.max_lookback,
+    signalAt: compilation.manifest.signal_at,
+    fillAt: compilation.manifest.fill_at,
+    direction: compilation.manifest.direction,
+    lookaheadSafe: compilation.manifest.lookahead_safe,
+  },
 });
 
 const mapDataQuality = (quality: ApiDataQuality): DataQualityReport => ({

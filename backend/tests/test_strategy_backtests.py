@@ -29,7 +29,9 @@ def test_compiler_builds_ema_pullback_contract() -> None:
     assert compilation.strategy.stop_loss_percent == 6
     assert compilation.strategy.signal_at == "close"
     assert compilation.strategy.fill_at == "next_open"
-    assert compilation.contract_version == "strategy-dsl.v0.4"
+    assert compilation.contract_version == "strategy-ir.v1"
+    assert compilation.strategy_ir.version == "strategy-ir.v1"
+    assert compilation.manifest.version == "strategy-manifest.v1"
     assert compilation.status == "ready"
     assert compilation.executable is True
 
@@ -45,6 +47,40 @@ def test_compiler_separates_entry_and_exit_ema_periods() -> None:
     assert compilation.strategy.exit_ema_period == 5
     assert "EMA20" in compilation.interpretation[0]
     assert "EMA5" in compilation.interpretation[1]
+
+
+def test_compiler_emits_auditable_ir_and_manifest() -> None:
+    compilation = compile_strategy(
+        CompileStrategyRequest(
+            prompt="MU 回踩 EMA20 并重新站稳时买入，收盘跌破 EMA5 时卖出。"
+        )
+    )
+
+    strategy_ir = compilation.strategy_ir
+    assert [item.id for item in strategy_ir.indicators] == ["entry_ema", "exit_ema"]
+    assert [item.period for item in strategy_ir.indicators] == [20, 5]
+    assert strategy_ir.entry.when.mode == "all"
+    assert len(strategy_ir.entry.when.conditions) == 3
+    assert strategy_ir.exit.when.conditions[0].operator == "crosses_below"
+    assert strategy_ir.execution.fill_at == "next_open"
+    assert compilation.manifest.warmup_bars == 21
+    assert compilation.manifest.required_fields == ["close", "high", "low", "open"]
+    assert len(compilation.manifest.ir_hash) == 64
+
+
+def test_strategy_ir_hash_is_reproducible_and_parameter_sensitive() -> None:
+    first = compile_strategy(
+        CompileStrategyRequest(prompt="MU 回踩 EMA20 买入，跌破 EMA5 卖出。")
+    )
+    repeated = compile_strategy(
+        CompileStrategyRequest(prompt="MU 回踩 EMA20 买入，跌破 EMA5 卖出。")
+    )
+    changed = compile_strategy(
+        CompileStrategyRequest(prompt="MU 回踩 EMA21 买入，跌破 EMA5 卖出。")
+    )
+
+    assert first.manifest.ir_hash == repeated.manifest.ir_hash
+    assert first.manifest.ir_hash != changed.manifest.ir_hash
 
 
 @pytest.mark.parametrize(
@@ -229,6 +265,20 @@ def test_backtest_is_reproducible() -> None:
     assert first.trade_count > 0
 
 
+@pytest.mark.parametrize("kind", list(StrategyKind))
+def test_every_template_executes_through_strategy_ir(kind: StrategyKind) -> None:
+    strategy = StrategySpec(name=f"MU {kind.value}", symbol="MU", kind=kind)
+    result = run_backtest(
+        create_seeded_daily_history("MU", 300),
+        strategy,
+        BacktestConfig(),
+    )
+
+    assert result.engine == "stonksup-strategy-ir-engine.v2"
+    assert result.contract_version == "strategy-ir.v1"
+    assert any("validated Strategy IR" in item for item in result.audit)
+
+
 def test_compile_and_run_api(client: TestClient) -> None:
     response = client.post(
         "/api/v1/backtests/compile-and-run",
@@ -249,7 +299,9 @@ def test_compile_and_run_api(client: TestClient) -> None:
     assert body["data"]["compilation"]["strategy"]["kind"] == "ema_pullback"
     assert body["data"]["compilation"]["strategy"]["ema_period"] == 5
     assert body["data"]["backtest"]["bars"] == 300
-    assert body["data"]["backtest"]["engine"] == "stonksup-deterministic-engine.v1"
+    assert body["data"]["backtest"]["engine"] == "stonksup-strategy-ir-engine.v2"
+    assert body["data"]["compilation"]["strategy_ir"]["version"] == "strategy-ir.v1"
+    assert body["data"]["compilation"]["manifest"]["lookahead_safe"] is True
     assert body["data"]["backtest"]["run_id"].startswith("BT-")
 
 

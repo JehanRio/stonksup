@@ -32,12 +32,14 @@ import {
   type WalkForwardResult,
 } from '../../services/walkForwardApi';
 import StrategyDataConsole from './components/StrategyDataConsole';
+import StrategyIrPreview from './components/StrategyIrPreview';
 import StrategyResultPanel from './components/StrategyResultPanel';
 import WalkForwardResultPanel from './components/WalkForwardResultPanel';
 import '../../styles/strategy-lab.css';
 import '../../styles/strategy-lab-api.css';
 import '../../styles/strategy-lab-data.css';
 import '../../styles/strategy-lab-walk-forward.css';
+import '../../styles/strategy-lab-ir.css';
 
 
 const INITIAL_PROMPT =
@@ -542,6 +544,9 @@ const StrategyLabPage: React.FC = () => {
                     <p key={warning} className="is-warning">{warning}</p>
                   ))}
                 </div>
+                {compilation.executable && (
+                  <StrategyIrPreview compilation={compilation} />
+                )}
               </>
             ) : (
               <div className="strategy-compiler-meta is-edited">

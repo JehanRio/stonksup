@@ -11,10 +11,11 @@ from app.schemas.backtests import (
     StrategyKind,
     StrategySpec,
 )
+from app.services.strategy_ir import build_strategy_ir, build_strategy_manifest
 
 
-CONTRACT_VERSION = "strategy-dsl.v0.4"
-COMPILER_NAME = "deterministic-nl-compiler.v3"
+CONTRACT_VERSION = "strategy-ir.v1"
+COMPILER_NAME = "deterministic-nl-to-ir.v1"
 IGNORED_SYMBOL_TOKENS = {
     "AI", "EMA", "SMA", "MA", "RSI", "MACD", "USD", "BUY", "SELL", "HOLD",
 }
@@ -408,6 +409,7 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
     if allocation is None:
         warnings.append("未指定仓位；仅在策略可执行后采用 95% 默认值。")
     confidence = max(0.15, 0.98 - len(unique_issues) * 0.18 - len(warnings) * 0.02)
+    strategy_ir = build_strategy_ir(strategy)
 
     return StrategyCompilation(
         prompt=prompt,
@@ -425,4 +427,6 @@ def compile_strategy(request: CompileStrategyRequest) -> StrategyCompilation:
         confidence=confidence,
         contract_version=CONTRACT_VERSION,
         compiler=COMPILER_NAME,
+        strategy_ir=strategy_ir,
+        manifest=build_strategy_manifest(strategy_ir),
     )

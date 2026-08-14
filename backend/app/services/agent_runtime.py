@@ -253,6 +253,8 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             "confidence": context.compilation.confidence,
             "normalized_prompt": context.compilation.normalized_prompt,
             "strategy": strategy.model_dump(mode="json"),
+            "strategy_ir": context.compilation.strategy_ir.model_dump(mode="json"),
+            "manifest": context.compilation.manifest.model_dump(mode="json"),
             "interpretation": context.compilation.interpretation,
             "assumptions": context.compilation.assumptions,
             "warnings": context.compilation.warnings,
@@ -299,7 +301,12 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
 
     loaded = load_backtest_data(context.session, context.settings, strategy, data, 756)
     if name == "run_backtest":
-        result = run_backtest(loaded.rows, strategy, context.request.config)
+        result = run_backtest(
+            loaded.rows,
+            strategy,
+            context.request.config,
+            strategy_ir=compilation.strategy_ir,
+        )
         result = enrich_backtest_result(result, loaded, context.request.config)
         result = apply_data_provenance(result, loaded)
         persist_backtest(
