@@ -196,6 +196,16 @@ def test_harness_rejects_non_verbatim_evidence() -> None:
     assert error.value.status_code == 422
 
 
+def test_harness_ignores_spacing_and_punctuation_in_verbatim_evidence() -> None:
+    candidate = _candidate()
+    candidate["entry"]["when"]["conditions"][0]["source_text"] = "收盘价站上EMA20"
+    candidate["entry"]["when"]["conditions"][1]["source_text"] = "RSI14低于40"
+
+    compilation = compile_strategy_ir_candidate(PROMPT, candidate)
+
+    assert compilation.executable is True
+
+
 def test_harness_rejects_hallucinated_indicator() -> None:
     candidate = _candidate()
     candidate["indicators"].append(

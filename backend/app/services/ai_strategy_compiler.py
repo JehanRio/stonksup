@@ -82,8 +82,9 @@ def strategy_ir_submission_tool(
 def _evidence_is_verbatim(prompt: str, fragment: str | None) -> bool:
     if not fragment:
         return False
-    normalized_prompt = re.sub(r"\s+", " ", prompt).strip().casefold()
-    normalized_fragment = re.sub(r"\s+", " ", fragment).strip().casefold()
+    ignored_formatting = r"[\s，。；、,:;.!?！？（）()]+"
+    normalized_prompt = re.sub(ignored_formatting, "", prompt).casefold()
+    normalized_fragment = re.sub(ignored_formatting, "", fragment).casefold()
     return normalized_fragment in normalized_prompt
 
 
