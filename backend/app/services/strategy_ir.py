@@ -171,7 +171,7 @@ def build_strategy_ir(strategy: StrategySpec) -> StrategyIR:
                 ],
             ),
         )
-    else:
+    elif strategy.kind == StrategyKind.RSI_MEAN_REVERSION:
         indicators = [
             IndicatorSpec(
                 id="rsi",
@@ -198,6 +198,8 @@ def build_strategy_ir(strategy: StrategySpec) -> StrategyIR:
                 ],
             ),
         )
+    else:
+        raise ValueError("custom_ir strategies require an explicit Strategy IR")
 
     return StrategyIR(
         name=strategy.name,

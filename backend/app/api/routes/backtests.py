@@ -21,12 +21,14 @@ from app.schemas.common import ApiResponse
 from app.schemas.strategy_ir import StrategyIR
 from app.schemas.walk_forward import RunWalkForwardRequest, WalkForwardResult
 from app.services.backtest_analysis import enrich_backtest_result
+from app.services.ai_strategy_compiler import compile_strategy_with_model
 from app.services.backtest_data import apply_data_provenance, load_backtest_data
 from app.services.backtest_engine import run_backtest
 from app.services.backtest_persistence import (
     get_backtest_run_history,
     persist_backtest,
 )
+from app.services.llm_provider import DeepSeekClient
 from app.services.strategy_compiler import compile_strategy, ensure_compilation_executable
 from app.services.walk_forward import run_walk_forward
 from app.services.walk_forward_persistence import persist_walk_forward
@@ -41,6 +43,27 @@ def compile_natural_language_strategy(
     request: Request,
 ) -> ApiResponse[StrategyCompilation]:
     return success_response(request, compile_strategy(payload))
+
+
+@router.post("/compile-ai", response_model=ApiResponse[StrategyCompilation])
+def compile_natural_language_strategy_with_ai(
+    payload: CompileStrategyRequest,
+    request: Request,
+    settings: Settings = Depends(get_app_settings),
+) -> ApiResponse[StrategyCompilation]:
+    if settings.deepseek_api_key is None:
+        raise StonksUpError(
+            "llm_provider_not_configured",
+            "AI 策略编译器尚未配置模型密钥。",
+            status_code=503,
+        )
+    client = DeepSeekClient(
+        settings.deepseek_api_key.get_secret_value(),
+        settings.deepseek_base_url,
+        settings.deepseek_model,
+        settings.agent_model_timeout_seconds,
+    )
+    return success_response(request, compile_strategy_with_model(payload.prompt, client))
 
 
 @router.get("/runs", response_model=ApiResponse[BacktestRunHistory])
@@ -88,6 +111,7 @@ def run_compiled_strategy(
         config=payload.config,
         data=payload.data,
         bars=payload.bars,
+        strategy_ir=payload.strategy_ir,
     )
     persist_backtest(
         session,
@@ -96,6 +120,7 @@ def run_compiled_strategy(
         config=payload.config,
         data=payload.data,
         result=result,
+        strategy_ir=payload.strategy_ir,
     )
     return success_response(request, result)
 
@@ -164,6 +189,7 @@ def compile_and_run_strategy(
         config=payload.config,
         data=payload.data,
         result=result,
+        strategy_ir=compilation.strategy_ir,
     )
     return success_response(
         request,

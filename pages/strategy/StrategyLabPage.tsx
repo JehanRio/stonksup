@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity,
+  Bot,
   ChevronRight,
   CircleAlert,
   Database,
@@ -9,11 +10,12 @@ import {
   Sparkles,
   Target,
   TrendingUp,
+  Zap,
 } from 'lucide-react';
 
 import {
-  compileAndRunStrategy,
   compileStrategy,
+  compileStrategyWithAi,
   getBacktestRunHistory,
   getMarketDataCapabilities,
   runStrategy,
@@ -105,6 +107,9 @@ const DEFAULT_STRATEGY: StrategySpec = {
 };
 
 const contractName = (strategy: StrategySpec) => {
+  if (strategy.kind === 'custom_ir') {
+    return strategy.name;
+  }
   if (strategy.kind === 'ema_pullback') {
     return `${strategy.symbol} EMA${strategy.entryEmaPeriod}/${strategy.exitEmaPeriod} 回踩`;
   }
@@ -183,6 +188,7 @@ const NumericField: React.FC<{
 
 type RunStatus = 'loading' | 'ready' | 'running' | 'complete' | 'error';
 type ValidationMode = 'backtest' | 'walk_forward';
+type CompilerMode = 'ai' | 'template';
 
 
 const StrategyLabPage: React.FC = () => {
@@ -196,6 +202,7 @@ const StrategyLabPage: React.FC = () => {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [walkForwardResult, setWalkForwardResult] = useState<WalkForwardResult | null>(null);
   const [validationMode, setValidationMode] = useState<ValidationMode>('backtest');
+  const [compilerMode, setCompilerMode] = useState<CompilerMode>('template');
   const [walkForwardConfig, setWalkForwardConfig] = useState<WalkForwardConfig>(DEFAULT_WALK_FORWARD);
   const [status, setStatus] = useState<RunStatus>('loading');
   const [promptDirty, setPromptDirty] = useState(false);
@@ -248,7 +255,16 @@ const StrategyLabPage: React.FC = () => {
   }, []);
 
   const busy = status === 'loading' || status === 'running';
-  const compilationBlocked = Boolean(compilation && !compilation.executable);
+  const compilationBlocked = Boolean(
+    (compilation && !compilation.executable)
+    || (definition.kind === 'custom_ir' && !compilation),
+  );
+
+  const compileCurrentPrompt = () => (
+    compilerMode === 'ai'
+      ? compileStrategyWithAi(prompt)
+      : compileStrategy(prompt)
+  );
 
   const updateDefinition = <Key extends keyof StrategySpec>(
     key: Key,
@@ -316,6 +332,7 @@ const StrategyLabPage: React.FC = () => {
     setWalkForwardResult(null);
     setStatus('running');
     setErrorMessage('');
+    setCompilerMode('template');
     try {
       const nextCompilation = await compileStrategy(template.prompt, kind);
       setCompilation(nextCompilation);
@@ -334,9 +351,12 @@ const StrategyLabPage: React.FC = () => {
     setStatus('running');
     setErrorMessage('');
     try {
-      const nextCompilation = await compileStrategy(prompt);
+      const nextCompilation = await compileCurrentPrompt();
       setCompilation(nextCompilation);
       setDefinition(nextCompilation.strategy);
+      if (nextCompilation.strategy.kind === 'custom_ir') {
+        setValidationMode('backtest');
+      }
       setPromptDirty(false);
       setStatus('ready');
     } catch (error) {
@@ -352,29 +372,36 @@ const StrategyLabPage: React.FC = () => {
     setStatus('running');
     setErrorMessage('');
     try {
+      let runDefinition = definition;
+      let runCompilation = compilation;
+      if (promptDirty) {
+        const nextCompilation = await compileCurrentPrompt();
+        setCompilation(nextCompilation);
+        setDefinition(nextCompilation.strategy);
+        setPromptDirty(false);
+        if (!nextCompilation.executable) {
+          throw new Error(nextCompilation.issues.map((item) => item.message).join(' '));
+        }
+        runDefinition = nextCompilation.strategy;
+        runCompilation = nextCompilation;
+      }
+
       if (validationMode === 'walk_forward') {
-        let runDefinition = definition;
-        if (promptDirty) {
-          const nextCompilation = await compileStrategy(prompt);
-          setCompilation(nextCompilation);
-          setDefinition(nextCompilation.strategy);
-          setPromptDirty(false);
-          if (!nextCompilation.executable) {
-            throw new Error(nextCompilation.issues.map((item) => item.message).join(' '));
-          }
-          runDefinition = nextCompilation.strategy;
+        if (runDefinition.kind === 'custom_ir') {
+          throw new Error('自定义 IR 暂不支持参数搜索，请先运行单次回测。');
         }
         setWalkForwardResult(
           await runWalkForward(runDefinition, config, runData, walkForwardConfig),
         );
-      } else if (promptDirty) {
-        const response = await compileAndRunStrategy(prompt, config, runData);
-        setCompilation(response.compilation);
-        setDefinition(response.compilation.strategy);
-        setResult(response.backtest);
-        setPromptDirty(false);
       } else {
-        setResult(await runStrategy(definition, config, runData));
+        setResult(
+          await runStrategy(
+            runDefinition,
+            config,
+            runData,
+            runCompilation?.strategyIr,
+          ),
+        );
       }
       setStatus('complete');
       if (validationMode === 'backtest') await refreshHistory();
@@ -510,6 +537,34 @@ const StrategyLabPage: React.FC = () => {
               }}
               aria-label="口述策略"
             />
+            <div className="strategy-compiler-mode" role="group" aria-label="策略编译模式">
+              <button
+                type="button"
+                className={compilerMode === 'ai' ? 'is-active' : ''}
+                onClick={() => {
+                  setCompilerMode('ai');
+                  setCompilation(null);
+                  setPromptDirty(true);
+                  invalidateResult();
+                }}
+                disabled={busy}
+              >
+                <Bot size={16} /> AI 语义
+              </button>
+              <button
+                type="button"
+                className={compilerMode === 'template' ? 'is-active' : ''}
+                onClick={() => {
+                  setCompilerMode('template');
+                  setCompilation(null);
+                  setPromptDirty(true);
+                  invalidateResult();
+                }}
+                disabled={busy}
+              >
+                <Zap size={16} /> 模板极速
+              </button>
+            </div>
             <button
               type="button"
               className="strategy-compile-button"
@@ -517,7 +572,7 @@ const StrategyLabPage: React.FC = () => {
               disabled={busy || prompt.trim().length < 4}
             >
               <Sparkles size={18} />
-              编译为结构化规则
+              {compilerMode === 'ai' ? 'AI 编译为 Strategy IR' : '编译为结构化规则'}
               <ChevronRight size={18} />
             </button>
             {compilation ? (

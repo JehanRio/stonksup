@@ -48,11 +48,26 @@ EMA pullback strategies retain independent entry and exit periods:
 
 Example: `回踩 EMA20 买入，跌破 EMA5 卖出` compiles to an entry EMA of 20 and an exit EMA of 5.
 
+There are now two compilation paths:
+
+- `Template fast path`: the deterministic compiler recognizes the four supported
+  strategy templates and builds their IR without a model call.
+- `AI semantic path`: DeepSeek maps composed EMA, SMA, RSI, rolling-high, and
+  volume conditions into a `custom` IR. Every generated condition carries a
+  verbatim `source_text` fragment from the user's request.
+
+The AI output is never executed directly. A deterministic harness validates the
+Pydantic schema, indicator references, dimensions, prompt evidence, symbol,
+periods, risk, position sizing, execution timing, and unsupported concepts. A
+rejected IR cannot reach market data or the backtest engine.
+
 The execution path is now:
 
 ```text
-Natural language -> StrategySpec -> Strategy IR v1 -> Manifest validation
-                 -> indicator graph -> condition interpreter -> orders -> metrics
+Natural language -> deterministic template compiler ----------+
+                 -> LLM semantic compiler -> safety harness ---+-> Strategy IR v1
+                 -> Manifest -> indicator graph -> condition interpreter
+                 -> orders -> metrics -> persisted IR + hash
 ```
 
 This intentionally avoids executing arbitrary model-generated Python. Future
@@ -68,6 +83,11 @@ silently discarded.
 
 ## API
 
+- `POST /api/v1/backtests/compile`: deterministic four-template compilation.
+- `POST /api/v1/backtests/compile-ai`: model-assisted semantic compilation into
+  a harness-validated custom IR.
+- `POST /api/v1/backtests/run`: execute a supplied `StrategySpec` and optional
+  `StrategyIR` through the shared interpreter.
 - `GET /api/v1/agent-runs/capabilities`: provider configuration and available tools.
 - `POST /api/v1/agent-runs`: execute a research task.
 - `POST /api/v1/agent-runs/{run_id}/continue`: answer every pending
@@ -96,6 +116,10 @@ Never commit API keys. A key pasted into chat, an issue, or logs must be revoked
 - Entry and exit EMA periods remain distinct throughout compilation and execution.
 - Compilation exposes Strategy IR v1 and a reproducible manifest fingerprint.
 - All four strategy templates execute through the shared condition interpreter.
+- A composed EMA + RSI + volume strategy compiles into custom IR and executes
+  through the same condition interpreter.
+- Non-verbatim evidence, hallucinated indicators, incompatible dimensions, and
+  changed risk or sizing values are rejected before execution.
 - Backtest and walk-forward records are persisted by the existing research engines.
 - Agent runs remain inspectable after a restart.
 - Failed or malformed tool calls are visible in the execution trace.
@@ -103,7 +127,12 @@ Never commit API keys. A key pasted into chat, an issue, or logs must be revoked
 
 ## Known boundaries
 
-- The deterministic compiler currently supports the four existing strategy families and their current grammar; IR groups support `all` and `any`, while nested groups and mixed-family natural-language composition remain future work.
+- The deterministic compiler supports four strategy families; the AI semantic
+  path supports composed EMA, SMA, RSI, rolling-high, and volume rules. Nested
+  condition groups, fundamentals, news, multi-asset rules, short selling,
+  pyramiding, take-profit rules, and intraday strategies remain unsupported.
+- Custom IR currently supports single backtests only. Walk-forward parameter
+  search still requires one of the four parameterized templates.
 - Agent execution is synchronous and does not yet support cancellation or background progress streaming.
 - Tool permissions are static; per-user authorization and portfolio-level limits are future work.
 - A provider-side model evaluation is required after a fresh DeepSeek key is configured.

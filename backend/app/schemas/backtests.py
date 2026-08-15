@@ -17,6 +17,7 @@ class StrategyKind(str, Enum):
     MA_CROSSOVER = "ma_crossover"
     MOMENTUM_BREAKOUT = "momentum_breakout"
     RSI_MEAN_REVERSION = "rsi_mean_reversion"
+    CUSTOM_IR = "custom_ir"
 
 
 class StrategySpec(BaseModel):
@@ -117,6 +118,7 @@ class BacktestDataConfig(BaseModel):
 
 class RunBacktestRequest(BaseModel):
     strategy: StrategySpec
+    strategy_ir: StrategyIR | None = None
     config: BacktestConfig = Field(default_factory=BacktestConfig)
     data: BacktestDataConfig = Field(default_factory=BacktestDataConfig)
     bars: int = Field(default=756, ge=120, le=5_000)

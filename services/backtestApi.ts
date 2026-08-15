@@ -2,7 +2,8 @@ export type StrategyKind =
   | 'ema_pullback'
   | 'ma_crossover'
   | 'momentum_breakout'
-  | 'rsi_mean_reversion';
+  | 'rsi_mean_reversion'
+  | 'custom_ir';
 
 export type PriceAdjustment = 'all' | 'splits' | 'dividends' | 'none';
 
@@ -33,6 +34,7 @@ export type StrategyIrOperand = {
   key: string | null;
   value: number | null;
   offset: -1 | 0;
+  multiplier: number;
 };
 
 export type StrategyIrCondition = {
@@ -40,6 +42,7 @@ export type StrategyIrCondition = {
   operator: 'lt' | 'lte' | 'gt' | 'gte' | 'crosses_above' | 'crosses_below';
   right: StrategyIrOperand;
   toleranceBps: number;
+  sourceText: string | null;
 };
 
 export type StrategyIrRule = {
@@ -55,7 +58,12 @@ export type StrategyIR = {
   name: string;
   symbol: string;
   timeframe: '1d';
-  template: StrategyKind;
+  template:
+    | 'ema_pullback'
+    | 'ma_crossover'
+    | 'momentum_breakout'
+    | 'rsi_mean_reversion'
+    | 'custom';
   indicators: Array<{
     id: string;
     kind: 'ema' | 'sma' | 'rsi' | 'rolling_max';
@@ -281,7 +289,27 @@ type ApiStrategyIrRule = {
       operator: StrategyIrCondition['operator'];
       right: StrategyIrOperand;
       tolerance_bps: number;
+      source_text: string | null;
     }>;
+  };
+};
+
+type ApiStrategyIR = {
+  version: 'strategy-ir.v1';
+  name: string;
+  symbol: string;
+  timeframe: '1d';
+  template: StrategyIR['template'];
+  indicators: StrategyIR['indicators'];
+  entry: ApiStrategyIrRule;
+  exit: ApiStrategyIrRule;
+  sizing: StrategyIR['sizing'];
+  risk: { stop_loss_percent: number };
+  execution: {
+    signal_at: 'close';
+    fill_at: 'next_open';
+    direction: 'long_only';
+    max_positions: 1;
   };
 };
 
@@ -303,24 +331,7 @@ type ApiCompilation = {
   confidence: number;
   contract_version: string;
   compiler: string;
-  strategy_ir: {
-    version: 'strategy-ir.v1';
-    name: string;
-    symbol: string;
-    timeframe: '1d';
-    template: StrategyKind;
-    indicators: StrategyIR['indicators'];
-    entry: ApiStrategyIrRule;
-    exit: ApiStrategyIrRule;
-    sizing: StrategyIR['sizing'];
-    risk: { stop_loss_percent: number };
-    execution: {
-      signal_at: 'close';
-      fill_at: 'next_open';
-      direction: 'long_only';
-      max_positions: 1;
-    };
-  };
+  strategy_ir: ApiStrategyIR;
   manifest: {
     version: 'strategy-manifest.v1';
     ir_hash: string;
@@ -508,6 +519,40 @@ const serializeStrategy = (strategy: StrategySpec): ApiStrategySpec => ({
   long_only: strategy.longOnly,
 });
 
+const serializeStrategyIr = (strategyIr: StrategyIR): ApiStrategyIR => {
+  const serializeRule = (rule: StrategyIrRule): ApiStrategyIrRule => ({
+    reason: rule.reason,
+    when: {
+      mode: rule.when.mode,
+      conditions: rule.when.conditions.map((condition) => ({
+        left: condition.left,
+        operator: condition.operator,
+        right: condition.right,
+        tolerance_bps: condition.toleranceBps,
+        source_text: condition.sourceText,
+      })),
+    },
+  });
+  return {
+    version: strategyIr.version,
+    name: strategyIr.name,
+    symbol: strategyIr.symbol,
+    timeframe: strategyIr.timeframe,
+    template: strategyIr.template,
+    indicators: strategyIr.indicators,
+    entry: serializeRule(strategyIr.entry),
+    exit: serializeRule(strategyIr.exit),
+    sizing: strategyIr.sizing,
+    risk: { stop_loss_percent: strategyIr.risk.stopLossPercent },
+    execution: {
+      signal_at: strategyIr.execution.signalAt,
+      fill_at: strategyIr.execution.fillAt,
+      direction: strategyIr.execution.direction,
+      max_positions: strategyIr.execution.maxPositions,
+    },
+  };
+};
+
 const serializeData = (data: BacktestDataConfig) => ({
   mode: data.mode,
   provider: data.provider,
@@ -547,6 +592,7 @@ const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
         conditions: compilation.strategy_ir.entry.when.conditions.map((condition) => ({
           ...condition,
           toleranceBps: condition.tolerance_bps,
+          sourceText: condition.source_text,
         })),
       },
     },
@@ -557,6 +603,7 @@ const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
         conditions: compilation.strategy_ir.exit.when.conditions.map((condition) => ({
           ...condition,
           toleranceBps: condition.tolerance_bps,
+          sourceText: condition.source_text,
         })),
       },
     },
@@ -677,6 +724,15 @@ export const compileStrategy = async (
   return mapCompilation(result);
 };
 
+export const compileStrategyWithAi = async (
+  prompt: string,
+): Promise<StrategyCompilation> => {
+  const result = await post<ApiCompilation>('/api/v1/backtests/compile-ai', {
+    prompt,
+  });
+  return mapCompilation(result);
+};
+
 export const getMarketDataCapabilities = async (): Promise<MarketDataCapability> => {
   const result = await apiRequest<ApiMarketDataCapability>(
     '/api/v1/market-data/capabilities',
@@ -721,10 +777,12 @@ export const runStrategy = async (
   strategy: StrategySpec,
   config: BacktestConfig,
   data: BacktestDataConfig,
+  strategyIr?: StrategyIR,
   bars = 756,
 ): Promise<BacktestResult> => {
   const result = await post<ApiBacktestResult>('/api/v1/backtests/run', {
     strategy: serializeStrategy(strategy),
+    strategy_ir: strategyIr ? serializeStrategyIr(strategyIr) : null,
     config: serializeConfig(config),
     data: serializeData(data),
     bars,

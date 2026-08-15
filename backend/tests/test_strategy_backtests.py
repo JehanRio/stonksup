@@ -265,7 +265,10 @@ def test_backtest_is_reproducible() -> None:
     assert first.trade_count > 0
 
 
-@pytest.mark.parametrize("kind", list(StrategyKind))
+@pytest.mark.parametrize(
+    "kind",
+    [kind for kind in StrategyKind if kind != StrategyKind.CUSTOM_IR],
+)
 def test_every_template_executes_through_strategy_ir(kind: StrategyKind) -> None:
     strategy = StrategySpec(name=f"MU {kind.value}", symbol="MU", kind=kind)
     result = run_backtest(

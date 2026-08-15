@@ -26,6 +26,10 @@ from app.schemas.agent_runs import (
 )
 from app.schemas.backtests import CompileStrategyRequest, StrategyCompilation
 from app.services.backtest_analysis import enrich_backtest_result
+from app.services.ai_strategy_compiler import (
+    compile_strategy_ir_candidate,
+    strategy_ir_submission_tool,
+)
 from app.services.backtest_data import apply_data_provenance, load_backtest_data
 from app.services.backtest_engine import run_backtest
 from app.services.backtest_persistence import persist_backtest
@@ -41,6 +45,8 @@ SYSTEM_PROMPT = """你是 StonksUp 的量化研究编排 Agent。
 所有收益、回撤、指标和样本外结果必须来自工具，禁止自行编造或计算。
 默认流程：编译策略、检查行情缓存、运行单次回测、运行样本外验证、给出结论；用户明确排除某一步时可跳过。
 compile_strategy 必须忠实处理用户原文，不得改写、删除或弱化任何交易条件。
+当策略组合 EMA、SMA、RSI、历史最高价或成交量条件时，compile_strategy 应提交 strategy_ir；
+每条 condition.source_text 必须逐字引用包含对应买卖动作的用户原文。四种基础模板可以省略 strategy_ir。
 如果编译结果 executable=false，必须停止调用后续工具，逐条说明 issues，并请用户补充或改写策略。
 最终回答必须区分：计算事实、风险判断、仍需验证的限制。使用中文，简洁具体。
 如果工具返回错误，说明原因并尝试使用已有工具恢复，不得声称工具已经成功。
@@ -48,18 +54,14 @@ compile_strategy 必须忠实处理用户原文，不得改写、删除或弱化
 
 
 TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "compile_strategy",
-            "description": "把本次任务中的用户原始策略描述编译成可执行、可审计的策略契约。必须首先调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-        },
-    },
+    strategy_ir_submission_tool(
+        name="compile_strategy",
+        description=(
+            "把用户原始策略编译成可执行契约。组合策略可提交 strategy_ir；"
+            "四种基础模板可省略，由确定性编译器处理。必须首先调用。"
+        ),
+        required=False,
+    ),
     {
         "type": "function",
         "function": {
@@ -240,8 +242,15 @@ def _compact_backtest(result) -> dict[str, Any]:
 
 def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "compile_strategy":
-        context.compilation = compile_strategy(
-            CompileStrategyRequest(prompt=context.request.prompt)
+        candidate = arguments.get("strategy_ir")
+        context.compilation = (
+            compile_strategy_ir_candidate(
+                context.request.prompt,
+                candidate,
+                compiler=f"{context.run.provider}-{context.run.model}-agent-ir.v1",
+            )
+            if isinstance(candidate, dict)
+            else compile_strategy(CompileStrategyRequest(prompt=context.request.prompt))
         )
         strategy = context.compilation.strategy
         context.run.symbol = strategy.symbol
@@ -316,6 +325,7 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             config=context.request.config,
             data=data,
             result=result,
+            strategy_ir=compilation.strategy_ir,
         )
         return _compact_backtest(result)
 

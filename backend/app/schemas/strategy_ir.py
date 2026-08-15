@@ -10,6 +10,7 @@ StrategyTemplate = Literal[
     "ma_crossover",
     "momentum_breakout",
     "rsi_mean_reversion",
+    "custom",
 ]
 MarketField = Literal["open", "high", "low", "close", "volume"]
 IndicatorKind = Literal["ema", "sma", "rsi", "rolling_max"]
@@ -35,12 +36,20 @@ class StrategyOperand(BaseModel):
     key: str | None = None
     value: float | None = None
     offset: Literal[-1, 0] = 0
+    multiplier: float = Field(default=1, gt=0, le=100)
 
     @model_validator(mode="after")
     def validate_reference(self) -> "StrategyOperand":
         if self.source == "constant":
-            if self.value is None or self.key is not None or self.offset != 0:
-                raise ValueError("constant operands require value and cannot use key or offset")
+            if (
+                self.value is None
+                or self.key is not None
+                or self.offset != 0
+                or self.multiplier != 1
+            ):
+                raise ValueError(
+                    "constant operands require value and cannot use key, offset, or multiplier"
+                )
             return self
         if not self.key or self.value is not None:
             raise ValueError("field and indicator operands require key and cannot use value")
@@ -60,6 +69,7 @@ class StrategyCondition(BaseModel):
     operator: ConditionOperator
     right: StrategyOperand
     tolerance_bps: int = Field(default=0, ge=0, le=2_000)
+    source_text: str | None = Field(default=None, min_length=1, max_length=240)
 
     @model_validator(mode="after")
     def validate_crossing_condition(self) -> "StrategyCondition":

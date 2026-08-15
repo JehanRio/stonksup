@@ -15,6 +15,8 @@ from app.schemas.backtests import (
     BacktestRunSummary,
     StrategySpec,
 )
+from app.schemas.strategy_ir import StrategyIR
+from app.services.strategy_ir import strategy_ir_hash
 
 
 def _as_utc(value: str) -> datetime:
@@ -29,6 +31,7 @@ def persist_backtest(
     config: BacktestConfig,
     data: BacktestDataConfig,
     result: BacktestResult,
+    strategy_ir: StrategyIR | None = None,
 ) -> None:
     existing = session.scalar(
         select(BacktestRun).where(BacktestRun.run_key == result.run_id)
@@ -55,7 +58,15 @@ def persist_backtest(
         status="tested",
         contract_version=result.contract_version,
         natural_language_prompt=prompt,
-        definition=strategy_spec.model_dump(mode="json"),
+        definition=(
+            {
+                "strategy_spec": strategy_spec.model_dump(mode="json"),
+                "strategy_ir": strategy_ir.model_dump(mode="json"),
+                "strategy_ir_hash": strategy_ir_hash(strategy_ir),
+            }
+            if strategy_ir is not None
+            else strategy_spec.model_dump(mode="json")
+        ),
     )
     now = datetime.now(UTC)
     run = BacktestRun(

@@ -28,7 +28,10 @@ const OPERATOR_LABELS: Record<StrategyIrCondition['operator'], string> = {
 const formatOperand = (operand: StrategyIrOperand) => {
   if (operand.source === 'constant') return `${operand.value}`;
   const reference = operand.key?.toUpperCase() || 'UNKNOWN';
-  return operand.offset === -1 ? `${reference}[前一日]` : reference;
+  const offsetReference = operand.offset === -1 ? `${reference}[前一日]` : reference;
+  return operand.multiplier === 1
+    ? offsetReference
+    : `${operand.multiplier} × ${offsetReference}`;
 };
 
 const formatCondition = (condition: StrategyIrCondition) => {

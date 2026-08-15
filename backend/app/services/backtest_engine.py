@@ -222,8 +222,9 @@ def _operand_value(
     if target_index < 0 or target_index >= len(rows) or operand.key is None:
         return None
     if operand.source == "field":
-        return float(getattr(rows[target_index], operand.key))
-    return indicators[operand.key][target_index]
+        return float(getattr(rows[target_index], operand.key)) * operand.multiplier
+    value = indicators[operand.key][target_index]
+    return value * operand.multiplier if value is not None else None
 
 
 def _evaluate_condition(

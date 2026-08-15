@@ -53,6 +53,8 @@ class _Candidate:
 
 
 def _primary_parameter(strategy: StrategySpec) -> str:
+    if strategy.kind == StrategyKind.CUSTOM_IR:
+        raise ValueError("Walk-forward parameter search does not support custom IR yet")
     return {
         StrategyKind.EMA_PULLBACK: "entry_ema_period",
         StrategyKind.MA_CROSSOVER: "fast_period",
