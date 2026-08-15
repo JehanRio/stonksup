@@ -258,7 +258,7 @@ def _format_condition(condition: StrategyCondition) -> str:
 
 def compile_strategy_ir_candidate(
     prompt: str,
-    candidate: dict[str, Any],
+    candidate: dict[str, Any] | str,
     *,
     compiler: str = AI_COMPILER_VERSION,
 ) -> StrategyCompilation:
@@ -272,6 +272,10 @@ def compile_strategy_ir_candidate(
         return baseline
 
     try:
+        if isinstance(candidate, str):
+            candidate = json.loads(candidate)
+        if not isinstance(candidate, dict):
+            raise ValueError("strategy_ir must be a JSON object")
         strategy_ir = StrategyIR.model_validate(candidate)
         validate_ai_strategy_ir(prompt, strategy_ir)
         if strategy_ir.symbol != baseline.strategy.symbol:
@@ -371,8 +375,8 @@ def compile_strategy_with_model(
     try:
         arguments = json.loads((call.get("function") or {}).get("arguments") or "{}")
         candidate = arguments["strategy_ir"]
-        if not isinstance(candidate, dict):
-            raise TypeError("strategy_ir must be an object")
+        if not isinstance(candidate, (dict, str)):
+            raise TypeError("strategy_ir must be an object or encoded object")
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise StonksUpError(
             "ai_strategy_ir_invalid_response",

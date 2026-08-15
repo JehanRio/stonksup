@@ -249,7 +249,7 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
                 candidate,
                 compiler=f"{context.run.provider}-{context.run.model}-agent-ir.v1",
             )
-            if isinstance(candidate, dict)
+            if isinstance(candidate, (dict, str))
             else compile_strategy(CompileStrategyRequest(prompt=context.request.prompt))
         )
         strategy = context.compilation.strategy

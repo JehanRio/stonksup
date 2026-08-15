@@ -144,6 +144,15 @@ class FakeIrModelClient:
         )
 
 
+def test_model_accepts_provider_double_encoded_strategy_ir() -> None:
+    client = FakeIrModelClient(json.dumps(_candidate(), ensure_ascii=False))
+
+    compilation = compile_strategy_with_model(PROMPT, client)
+
+    assert compilation.strategy.kind == StrategyKind.CUSTOM_IR
+    assert compilation.strategy_ir.symbol == "MU"
+
+
 def test_model_compiles_mixed_strategy_to_executable_ir() -> None:
     client = FakeIrModelClient(_candidate())
 
