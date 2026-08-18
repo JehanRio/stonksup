@@ -9,6 +9,7 @@ from app.schemas.backtests import (
     BacktestConfig,
     BacktestDataConfig,
     DataQualityReport,
+    SignalDiagnostics,
     StrategySpec,
 )
 from app.schemas.strategy_ir import StrategyIR
@@ -141,3 +142,4 @@ class WalkForwardResult(BaseModel):
     assumptions: list[str]
     audit: list[str]
     data_quality: DataQualityReport
+    signal_diagnostics: SignalDiagnostics

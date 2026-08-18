@@ -97,6 +97,7 @@ def persist_walk_forward(
             "parameter_surface": [
                 point.model_dump(mode="json") for point in result.parameter_surface
             ],
+            "signal_diagnostics": result.signal_diagnostics.model_dump(mode="json"),
             "data_quality": result.data_quality.model_dump(mode="json"),
             "assumptions": result.assumptions,
             "audit": result.audit,

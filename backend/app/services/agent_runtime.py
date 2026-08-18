@@ -49,6 +49,7 @@ compile_strategy 必须忠实处理用户原文，不得改写、删除或弱化
 每条 condition.source_text 必须逐字引用包含对应买卖动作的用户原文。四种基础模板可以省略 strategy_ir。
 如果编译结果 executable=false，必须停止调用后续工具，逐条说明 issues，并请用户补充或改写策略。
 最终回答必须区分：计算事实、风险判断、仍需验证的限制。使用中文，简洁具体。
+若交易数为零或很少，必须引用 signal_diagnostics 的可计算次数、条件命中、联合命中和订单数解释原因，不得猜测。
 如果工具返回错误，说明原因并尝试使用已有工具恢复，不得声称工具已经成功。
 """
 
@@ -74,7 +75,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_backtest",
-            "description": "用确定性引擎运行单次回测，返回收益、风险、基准和数据质量摘要。",
+            "description": "用确定性引擎运行单次回测，返回收益、风险、基准、数据质量和信号漏斗。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -82,7 +83,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_walk_forward",
-            "description": "运行滚动样本外验证和参数搜索，返回过拟合诊断摘要。",
+            "description": "运行滚动样本外验证和参数搜索，返回过拟合诊断与样本外信号漏斗。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -235,6 +236,7 @@ def _compact_backtest(result) -> dict[str, Any]:
         "calmar_ratio": result.calmar_ratio,
         "trade_count": result.trade_count,
         "win_rate": result.win_rate,
+        "signal_diagnostics": result.signal_diagnostics.model_dump(mode="json"),
         "data_quality": result.data_quality.status if result.data_quality else "unknown",
         "data_warnings": [item for item in result.audit if item.startswith("WARN")],
     }
@@ -364,6 +366,7 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             "trade_count": result.aggregate.trade_count,
             "parameter_stability": result.aggregate.parameter_stability,
             "overfitting_risk": result.overfitting_risk,
+            "signal_diagnostics": result.signal_diagnostics.model_dump(mode="json"),
             "warnings": result.warnings,
             "data_quality": result.data_quality.status,
         }

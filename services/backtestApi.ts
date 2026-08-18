@@ -215,6 +215,44 @@ export type DataQualityReport = {
   checks: string[];
 };
 
+export type SignalConditionDiagnostic = {
+  index: number;
+  expression: string;
+  expressionVariants: string[];
+  sourceText: string | null;
+  evaluatedBars: number;
+  matchedBars: number;
+  matchRate: number;
+};
+
+export type SignalRuleDiagnostic = {
+  reason: string;
+  mode: 'all' | 'any';
+  evaluatedBars: number;
+  matchedBars: number;
+  matchRate: number;
+  conditions: SignalConditionDiagnostic[];
+};
+
+export type SignalDiagnostics = {
+  entry: SignalRuleDiagnostic;
+  exit: SignalRuleDiagnostic;
+  entryOrders: number;
+  exitOrders: number;
+  protectiveStops: number;
+  forcedExits: number;
+  conclusion:
+    | 'no_evaluable_entry_bars'
+    | 'entry_conditions_never_aligned'
+    | 'orders_generated';
+  bottleneck: {
+    side: 'entry' | 'exit';
+    conditionIndex: number;
+    expression: string;
+    matchRate: number;
+  } | null;
+};
+
 export type BacktestResult = {
   runId: string;
   symbol: string;
@@ -252,6 +290,7 @@ export type BacktestResult = {
   assumptions: string[];
   audit: string[];
   dataQuality: DataQualityReport;
+  signalDiagnostics: SignalDiagnostics;
 };
 
 type ApiEnvelope<Data> = {
@@ -380,6 +419,37 @@ type ApiDataQuality = {
   checks: string[];
 };
 
+export type ApiSignalDiagnostics = {
+  entry: {
+    reason: string;
+    mode: 'all' | 'any';
+    evaluated_bars: number;
+    matched_bars: number;
+    match_rate: number;
+    conditions: Array<{
+      index: number;
+      expression: string;
+      expression_variants: string[];
+      source_text: string | null;
+      evaluated_bars: number;
+      matched_bars: number;
+      match_rate: number;
+    }>;
+  };
+  exit: ApiSignalDiagnostics['entry'];
+  entry_orders: number;
+  exit_orders: number;
+  protective_stops: number;
+  forced_exits: number;
+  conclusion: SignalDiagnostics['conclusion'];
+  bottleneck: {
+    side: 'entry' | 'exit';
+    condition_index: number;
+    expression: string;
+    match_rate: number;
+  } | null;
+};
+
 type ApiBacktestResult = {
   run_id: string;
   symbol: string;
@@ -433,6 +503,7 @@ type ApiBacktestResult = {
   assumptions: string[];
   audit: string[];
   data_quality: ApiDataQuality;
+  signal_diagnostics: ApiSignalDiagnostics;
 };
 
 type ApiMarketDataCapability = {
@@ -677,6 +748,42 @@ const mapDataQuality = (quality: ApiDataQuality): DataQualityReport => ({
   checks: quality.checks,
 });
 
+export const mapSignalDiagnostics = (
+  diagnostics: ApiSignalDiagnostics,
+): SignalDiagnostics => {
+  const mapRule = (rule: ApiSignalDiagnostics['entry']): SignalRuleDiagnostic => ({
+    reason: rule.reason,
+    mode: rule.mode,
+    evaluatedBars: rule.evaluated_bars,
+    matchedBars: rule.matched_bars,
+    matchRate: rule.match_rate,
+    conditions: rule.conditions.map((condition) => ({
+      index: condition.index,
+      expression: condition.expression,
+      expressionVariants: condition.expression_variants,
+      sourceText: condition.source_text,
+      evaluatedBars: condition.evaluated_bars,
+      matchedBars: condition.matched_bars,
+      matchRate: condition.match_rate,
+    })),
+  });
+  return {
+    entry: mapRule(diagnostics.entry),
+    exit: mapRule(diagnostics.exit),
+    entryOrders: diagnostics.entry_orders,
+    exitOrders: diagnostics.exit_orders,
+    protectiveStops: diagnostics.protective_stops,
+    forcedExits: diagnostics.forced_exits,
+    conclusion: diagnostics.conclusion,
+    bottleneck: diagnostics.bottleneck ? {
+      side: diagnostics.bottleneck.side,
+      conditionIndex: diagnostics.bottleneck.condition_index,
+      expression: diagnostics.bottleneck.expression,
+      matchRate: diagnostics.bottleneck.match_rate,
+    } : null,
+  };
+};
+
 const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
   const benchmarkByDate = new Map(
     result.benchmark_curve.map((point) => [point.date, point.value]),
@@ -734,6 +841,7 @@ const mapBacktest = (result: ApiBacktestResult): BacktestResult => {
     assumptions: result.assumptions,
     audit: result.audit,
     dataQuality: mapDataQuality(result.data_quality),
+    signalDiagnostics: mapSignalDiagnostics(result.signal_diagnostics),
   };
 };
 

@@ -26,6 +26,7 @@ import type {
   StrategyCompilation,
   StrategySpec,
 } from '../../../services/backtestApi';
+import SignalFunnelPanel from './SignalFunnelPanel';
 import '../../../styles/strategy-lab-phase3.css';
 import '../../../styles/strategy-lab-phase4.css';
 
@@ -321,10 +322,15 @@ const StrategyResultPanel: React.FC<Props> = ({
             </ul>
           </section>
 
+          <SignalFunnelPanel
+            diagnostics={result.signalDiagnostics}
+            eyebrow="04 / SIGNAL FUNNEL"
+          />
+
           <section className="strategy-chart-section">
             <div className="strategy-result-heading">
               <div>
-                <span>04 / RELATIVE EQUITY</span>
+                <span>05 / RELATIVE EQUITY</span>
                 <h3>策略、标的持有与独立基准</h3>
               </div>
               <div className="strategy-chart-legend phase2">
@@ -392,7 +398,7 @@ const StrategyResultPanel: React.FC<Props> = ({
           <div className="strategy-audit-grid">
             <section className="strategy-audit-section">
               <div className="strategy-result-heading">
-                <div><span>05 / COMPILED CONTRACT</span><h3>{compilation ? 'AI 规则解释' : '当前结构化规则'}</h3></div>
+                <div><span>06 / COMPILED CONTRACT</span><h3>{compilation ? 'AI 规则解释' : '当前结构化规则'}</h3></div>
                 <Braces size={20} />
               </div>
               <ol className="strategy-rule-list">
@@ -408,7 +414,7 @@ const StrategyResultPanel: React.FC<Props> = ({
 
             <section className="strategy-audit-section">
               <div className="strategy-result-heading">
-                <div><span>06 / ASSUMPTIONS</span><h3>运行边界</h3></div>
+                <div><span>07 / ASSUMPTIONS</span><h3>运行边界</h3></div>
                 <SlidersHorizontal size={20} />
               </div>
               <ul className="strategy-assumption-list">
@@ -421,7 +427,7 @@ const StrategyResultPanel: React.FC<Props> = ({
 
           <section className="strategy-trades-section">
             <div className="strategy-result-heading">
-              <div><span>07 / TRADE LEDGER</span><h3>模拟交易明细</h3></div>
+              <div><span>08 / TRADE LEDGER</span><h3>模拟交易明细</h3></div>
               <span className="strategy-profit-factor">Profit factor <strong>{formatMetric(result.profitFactor)}</strong></span>
             </div>
             <div className="strategy-trade-table">
@@ -442,7 +448,7 @@ const StrategyResultPanel: React.FC<Props> = ({
           </section>
 
           <section className="strategy-engine-audit">
-            <div><span>08 / ENGINE AUDIT</span><h3>可复现性检查</h3></div>
+            <div><span>09 / ENGINE AUDIT</span><h3>可复现性检查</h3></div>
             <ul>
               {result.audit.map((item, index) => (
                 <li key={`${index}-${item}`} className={item.startsWith('PASS') ? 'is-pass' : ''}>{item}</li>

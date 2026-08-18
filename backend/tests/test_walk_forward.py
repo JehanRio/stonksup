@@ -128,6 +128,17 @@ def test_walk_forward_is_reproducible_separated_and_persisted(client) -> None:
     assert result["window_count"] == 4
     assert result["candidate_count"] == 24
     assert len(result["equity_curve"]) == 160
+    assert result["signal_diagnostics"]["entry"]["evaluated_bars"] > 0
+    assert result["signal_diagnostics"]["entry"]["conditions"][0][
+        "expression_variants"
+    ]
+    assert result["signal_diagnostics"]["entry_orders"] >= 0
+    assert (
+        result["signal_diagnostics"]["exit_orders"]
+        + result["signal_diagnostics"]["protective_stops"]
+        + result["signal_diagnostics"]["forced_exits"]
+        == result["aggregate"]["trade_count"]
+    )
     assert all(
         window["train_end"] < window["test_start"]
         for window in result["windows"]
@@ -184,6 +195,7 @@ def test_custom_ir_walk_forward_tunes_declared_indicator_and_persists_ir(client)
     assert result["primary_parameter"] == "indicator.entry_ema.period"
     assert result["window_count"] == 4
     assert result["candidate_count"] == 12
+    assert len(result["signal_diagnostics"]["entry"]["conditions"]) == 2
     assert {
         window["selected_period"] for window in result["windows"]
     }.issubset({3, 4, 5})

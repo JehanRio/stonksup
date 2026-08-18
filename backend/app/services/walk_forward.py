@@ -19,7 +19,7 @@ from app.schemas.walk_forward import (
 )
 from app.services.backtest_analysis import enrich_backtest_result
 from app.services.backtest_data import LoadedBacktestData
-from app.services.backtest_engine import run_backtest
+from app.services.backtest_engine import merge_signal_diagnostics, run_backtest
 from app.services.strategy_ir import ensure_search_parameters, strategy_ir_hash
 
 
@@ -560,5 +560,6 @@ def run_walk_forward(
             *loaded.quality.checks,
         ],
         data_quality=loaded.quality,
+        signal_diagnostics=merge_signal_diagnostics(selected_results),
     )
     return WalkForwardExecution(result=result, trials=all_trials)

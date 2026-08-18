@@ -188,6 +188,8 @@ def test_quant_agent_calls_tools_and_persists_trace(client) -> None:
         "medium",
         "high",
     }
+    assert "signal_diagnostics" in result.tool_calls[2].result["data"]
+    assert "signal_diagnostics" in result.tool_calls[3].result["data"]
     assert persisted.final_output == result.final_output
     assert history.runs[0].run_id == result.run_id
 

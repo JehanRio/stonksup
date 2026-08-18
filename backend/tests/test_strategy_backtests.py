@@ -9,6 +9,12 @@ from app.schemas.backtests import (
     StrategyKind,
     StrategySpec,
 )
+from app.schemas.strategy_ir import (
+    ConditionGroup,
+    SignalRule,
+    StrategyCondition,
+    StrategyOperand,
+)
 from app.services.backtest_engine import Bar, create_seeded_daily_history, run_backtest
 from app.services.strategy_compiler import compile_strategy
 
@@ -247,6 +253,54 @@ def test_ema_signal_executes_on_next_session_open() -> None:
     assert result.trades[0].entry_price == 20.0
     assert result.trades[0].exit_date == (start + timedelta(days=4)).isoformat()
     assert result.trades[0].exit_price == 9.5
+    assert result.signal_diagnostics.entry_orders == 1
+    assert result.signal_diagnostics.exit_orders == 1
+    assert result.signal_diagnostics.forced_exits == 0
+    assert result.signal_diagnostics.entry.evaluated_bars > 0
+    assert result.signal_diagnostics.entry.matched_bars >= 1
+    assert result.signal_diagnostics.conclusion == "orders_generated"
+
+
+def test_signal_funnel_explains_when_entry_conditions_never_match() -> None:
+    compilation = compile_strategy(
+        CompileStrategyRequest(prompt="MU 回踩 EMA5 买入，跌破 EMA5 卖出")
+    )
+    impossible_entry = SignalRule(
+        reason="impossible_price",
+        when=ConditionGroup(
+            mode="all",
+            conditions=[
+                StrategyCondition(
+                    left=StrategyOperand(source="field", key="close"),
+                    operator="gt",
+                    right=StrategyOperand(source="constant", value=1_000_000),
+                    source_text="收盘价高于一百万美元时买入",
+                )
+            ],
+        ),
+    )
+    strategy_ir = compilation.strategy_ir.model_copy(
+        update={"entry": impossible_entry},
+        deep=True,
+    )
+
+    result = run_backtest(
+        create_seeded_daily_history("MU", 300),
+        compilation.strategy,
+        BacktestConfig(),
+        strategy_ir=strategy_ir,
+    )
+
+    diagnostics = result.signal_diagnostics
+    assert diagnostics.entry.evaluated_bars == 299
+    assert diagnostics.entry.conditions[0].evaluated_bars == 299
+    assert diagnostics.entry.conditions[0].matched_bars == 0
+    assert diagnostics.entry.matched_bars == 0
+    assert diagnostics.entry_orders == 0
+    assert diagnostics.forced_exits == 0
+    assert diagnostics.conclusion == "entry_conditions_never_aligned"
+    assert diagnostics.bottleneck is not None
+    assert diagnostics.bottleneck.condition_index == 0
 
 
 def test_backtest_is_reproducible() -> None:

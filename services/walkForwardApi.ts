@@ -1,12 +1,15 @@
 import { serializeStrategyIr } from './backtestApi';
 import type {
+  ApiSignalDiagnostics,
   BacktestConfig,
   BacktestDataConfig,
   DataQualityReport,
   PriceAdjustment,
+  SignalDiagnostics,
   StrategyIR,
   StrategySpec,
 } from './backtestApi';
+import { mapSignalDiagnostics } from './backtestApi';
 
 
 export type WalkForwardObjective = 'calmar' | 'sharpe' | 'annualized_return';
@@ -109,6 +112,7 @@ export type WalkForwardResult = {
   assumptions: string[];
   audit: string[];
   dataQuality: DataQualityReport;
+  signalDiagnostics: SignalDiagnostics;
 };
 
 type ApiEnvelope<Data> = {
@@ -210,6 +214,7 @@ type ApiWalkForwardResult = {
     benchmark_hash: string;
     checks: string[];
   };
+  signal_diagnostics: ApiSignalDiagnostics;
 };
 
 const serializeStrategy = (strategy: StrategySpec) => ({
@@ -302,6 +307,7 @@ const mapResult = (result: ApiWalkForwardResult): WalkForwardResult => ({
   warnings: result.warnings,
   assumptions: result.assumptions,
   audit: result.audit,
+  signalDiagnostics: mapSignalDiagnostics(result.signal_diagnostics),
   dataQuality: {
     status: result.data_quality.status,
     adjustment: result.data_quality.adjustment,

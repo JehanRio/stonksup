@@ -19,6 +19,7 @@ import {
 } from 'recharts';
 
 import type { WalkForwardResult } from '../../../services/walkForwardApi';
+import SignalFunnelPanel from './SignalFunnelPanel';
 import '../../../styles/strategy-lab-walk-forward.css';
 
 
@@ -207,9 +208,16 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
             </section>
           )}
 
+          <SignalFunnelPanel
+            diagnostics={result.signalDiagnostics}
+            eyebrow="01 / OOS SIGNAL FUNNEL"
+            title="样本外条件命中与订单转化"
+            scopeLabel={`${result.windowCount} 个测试窗口汇总`}
+          />
+
           <section className="strategy-chart-section walk-forward-chart-section">
             <div className="strategy-result-heading">
-              <div><span>01 / STITCHED OOS EQUITY</span><h3>仅拼接测试期的净值</h3></div>
+              <div><span>02 / STITCHED OOS EQUITY</span><h3>仅拼接测试期的净值</h3></div>
               <div className="strategy-chart-legend phase2">
                 <span><i className="strategy-line" />Strategy</span>
                 <span><i className="asset-line" />{result.symbol}</span>
@@ -257,7 +265,7 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <section className="walk-forward-ledger-section">
             <div className="strategy-result-heading">
-              <div><span>02 / WINDOW LEDGER</span><h3>每个窗口的冻结参数与测试表现</h3></div>
+              <div><span>03 / WINDOW LEDGER</span><h3>每个窗口的冻结参数与测试表现</h3></div>
               <span>{parameterLabel(result.primaryParameter)}</span>
             </div>
             <div className="walk-forward-table-wrap">
@@ -284,7 +292,7 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <section className="walk-forward-ledger-section">
             <div className="strategy-result-heading">
-              <div><span>03 / PARAMETER SURFACE</span><h3>全部候选参数，不只展示赢家</h3></div>
+              <div><span>04 / PARAMETER SURFACE</span><h3>全部候选参数，不只展示赢家</h3></div>
               <span>{result.parameterSurface.length} 组参数</span>
             </div>
             <div className="walk-forward-table-wrap compact">
@@ -304,11 +312,11 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <div className="walk-forward-audit-grid">
             <section>
-              <div className="strategy-result-heading"><div><span>04 / ASSUMPTIONS</span><h3>验证边界</h3></div><CircleAlert size={20} /></div>
+              <div className="strategy-result-heading"><div><span>05 / ASSUMPTIONS</span><h3>验证边界</h3></div><CircleAlert size={20} /></div>
               <ul>{result.assumptions.map((item) => <li key={item}>{item}</li>)}</ul>
             </section>
             <section>
-              <div className="strategy-result-heading"><div><span>05 / AUDIT</span><h3>无穿越检查</h3></div><ShieldCheck size={20} /></div>
+              <div className="strategy-result-heading"><div><span>06 / AUDIT</span><h3>无穿越检查</h3></div><ShieldCheck size={20} /></div>
               <ul>{result.audit.map((item, index) => <li key={`${index}-${item}`} className={item.startsWith('PASS') ? 'is-pass' : ''}>{item}</li>)}</ul>
             </section>
           </div>

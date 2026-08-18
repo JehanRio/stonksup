@@ -175,6 +175,47 @@ class DataQualityReport(BaseModel):
     checks: list[str]
 
 
+class SignalConditionDiagnostic(BaseModel):
+    index: int = Field(ge=0)
+    expression: str
+    expression_variants: list[str]
+    source_text: str | None = None
+    evaluated_bars: int = Field(ge=0)
+    matched_bars: int = Field(ge=0)
+    match_rate: float = Field(ge=0, le=1)
+
+
+class SignalRuleDiagnostic(BaseModel):
+    reason: str
+    mode: Literal["all", "any"]
+    evaluated_bars: int = Field(ge=0)
+    matched_bars: int = Field(ge=0)
+    match_rate: float = Field(ge=0, le=1)
+    conditions: list[SignalConditionDiagnostic]
+
+
+class SignalBottleneck(BaseModel):
+    side: Literal["entry", "exit"]
+    condition_index: int = Field(ge=0)
+    expression: str
+    match_rate: float = Field(ge=0, le=1)
+
+
+class SignalDiagnostics(BaseModel):
+    entry: SignalRuleDiagnostic
+    exit: SignalRuleDiagnostic
+    entry_orders: int = Field(ge=0)
+    exit_orders: int = Field(ge=0)
+    protective_stops: int = Field(ge=0)
+    forced_exits: int = Field(ge=0)
+    conclusion: Literal[
+        "no_evaluable_entry_bars",
+        "entry_conditions_never_aligned",
+        "orders_generated",
+    ]
+    bottleneck: SignalBottleneck | None = None
+
+
 class BacktestResult(BaseModel):
     run_id: str
     symbol: str
@@ -213,6 +254,7 @@ class BacktestResult(BaseModel):
     total_commission: float = 0
     benchmark_curve: list[BenchmarkPoint] = Field(default_factory=list)
     data_quality: DataQualityReport | None = None
+    signal_diagnostics: SignalDiagnostics
 
 
 class CompileAndRunResult(BaseModel):

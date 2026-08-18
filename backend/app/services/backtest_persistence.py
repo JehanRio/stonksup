@@ -105,6 +105,7 @@ def persist_backtest(
                 if result.data_quality
                 else None
             ),
+            "signal_diagnostics": result.signal_diagnostics.model_dump(mode="json"),
             "as_of": result.as_of,
         },
         bar_count=result.bars,

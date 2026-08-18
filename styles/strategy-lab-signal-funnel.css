@@ -1,0 +1,340 @@
+.signal-funnel-section {
+  margin-top: 20px;
+  padding: 24px 22px 0;
+  border-top: 1px solid var(--su-line);
+}
+
+.signal-funnel-heading {
+  padding-bottom: 14px;
+}
+
+.signal-funnel-heading > span {
+  color: var(--su-muted);
+  font-family: var(--su-mono);
+  font-size: 12px;
+}
+
+.signal-funnel-flow {
+  display: grid;
+  grid-template-columns: minmax(116px, 1fr) 18px minmax(116px, 1fr) 18px minmax(116px, 1fr) 18px minmax(116px, 1fr);
+  align-items: center;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--su-line-soft);
+  border-radius: 5px;
+  background: #0b0f12;
+}
+
+.signal-funnel-flow > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.signal-funnel-flow > svg {
+  color: #56616b;
+}
+
+.signal-funnel-flow span {
+  overflow: hidden;
+  color: var(--su-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-funnel-flow strong {
+  color: #e7edf3;
+  font-family: var(--su-mono);
+  font-size: 18px;
+}
+
+.signal-funnel-rules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+  border-top: 1px solid var(--su-line-soft);
+  border-bottom: 1px solid var(--su-line-soft);
+}
+
+.signal-funnel-rule {
+  min-width: 0;
+  padding: 18px 18px 16px 0;
+}
+
+.signal-funnel-rule + .signal-funnel-rule {
+  padding-right: 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--su-line-soft);
+}
+
+.signal-funnel-rule > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 13px;
+}
+
+.signal-funnel-rule > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.signal-funnel-rule > header span,
+.signal-funnel-rule > header b {
+  color: #6fa1ff;
+  font-family: var(--su-mono);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.signal-funnel-rule > header strong {
+  color: var(--su-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.signal-condition-list {
+  display: grid;
+  gap: 7px;
+}
+
+.signal-condition-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.45fr) minmax(64px, 0.7fr) 92px;
+  align-items: center;
+  gap: 12px;
+  min-height: 50px;
+  padding: 8px 10px;
+  border-left: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.signal-condition-row.is-bottleneck {
+  border-left-color: var(--su-amber);
+  background: rgba(231, 184, 75, 0.05);
+}
+
+.signal-condition-copy {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.signal-condition-copy > span {
+  color: #6fa1ff;
+  font-family: var(--su-mono);
+  font-size: 11px;
+}
+
+.signal-condition-copy > strong {
+  overflow: hidden;
+  color: #cbd3db;
+  font-family: var(--su-mono);
+  font-size: 12px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-condition-copy > small {
+  color: var(--su-amber);
+  font-family: var(--su-mono);
+  font-size: 9px;
+}
+
+.signal-condition-meter {
+  position: relative;
+  overflow: hidden;
+  height: 5px;
+  border-radius: 2px;
+  background: #242a30;
+}
+
+.signal-condition-meter i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 0;
+  border-radius: inherit;
+  background: var(--su-green);
+}
+
+.signal-condition-row.is-bottleneck .signal-condition-meter i {
+  background: var(--su-amber);
+}
+
+.signal-condition-value {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 3px;
+  text-align: right;
+}
+
+.signal-condition-value strong,
+.signal-condition-value span,
+.signal-condition-value small {
+  font-family: var(--su-mono);
+  font-size: 12px;
+}
+
+.signal-condition-value strong {
+  color: #e5ebf1;
+}
+
+.signal-condition-value span {
+  color: var(--su-muted);
+}
+
+.signal-condition-value small {
+  color: var(--su-green);
+}
+
+.signal-joint-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 9px;
+  border-top: 1px dashed var(--su-line);
+  color: var(--su-muted);
+  font-family: var(--su-mono);
+  font-size: 12px;
+}
+
+.signal-joint-row svg,
+.signal-joint-row strong {
+  color: #6fa1ff;
+}
+
+.signal-joint-row small {
+  min-width: 50px;
+  color: var(--su-soft);
+  text-align: right;
+}
+
+.signal-funnel-conclusion {
+  display: grid;
+  grid-template-columns: 22px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(231, 184, 75, 0.26);
+  color: var(--su-soft);
+  font-size: 13px;
+}
+
+.signal-funnel-conclusion svg,
+.signal-funnel-conclusion strong {
+  color: var(--su-amber);
+}
+
+.signal-funnel-conclusion.is-orders_generated {
+  border-bottom-color: rgba(49, 201, 148, 0.28);
+}
+
+.signal-funnel-conclusion.is-orders_generated svg,
+.signal-funnel-conclusion.is-orders_generated strong {
+  color: var(--su-green);
+}
+
+@media (max-width: 1550px) {
+  .signal-funnel-rules {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-funnel-rule,
+  .signal-funnel-rule + .signal-funnel-rule {
+    padding: 16px 0;
+    border-left: 0;
+  }
+
+  .signal-funnel-rule + .signal-funnel-rule {
+    border-top: 1px solid var(--su-line-soft);
+  }
+}
+
+@media (max-width: 1180px) {
+  .signal-funnel-flow {
+    grid-template-columns: minmax(104px, 1fr) 14px minmax(104px, 1fr) 14px minmax(104px, 1fr) 14px minmax(104px, 1fr);
+  }
+
+  .signal-condition-row {
+    grid-template-columns: minmax(130px, 1fr) 72px;
+  }
+
+  .signal-condition-meter {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .signal-funnel-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .signal-funnel-flow > svg {
+    display: none;
+  }
+
+}
+
+@media (max-width: 560px) {
+  .signal-funnel-section {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .signal-funnel-heading {
+    align-items: flex-start;
+  }
+
+  .signal-funnel-heading > span {
+    max-width: 42%;
+    text-align: right;
+  }
+
+  .signal-condition-row {
+    grid-template-columns: minmax(0, 1fr) 78px;
+    align-items: start;
+    min-height: 58px;
+  }
+
+  .signal-condition-copy > strong {
+    overflow: visible;
+    line-height: 1.45;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .signal-condition-copy > small {
+    display: none;
+  }
+
+  .signal-condition-value {
+    grid-template-columns: auto auto;
+    justify-content: end;
+  }
+
+  .signal-condition-value small {
+    grid-column: 1 / -1;
+  }
+
+  .signal-funnel-conclusion {
+    grid-template-columns: 22px 1fr;
+    padding: 10px 8px;
+  }
+
+  .signal-funnel-conclusion > span {
+    grid-column: 2;
+    line-height: 1.5;
+  }
+}
