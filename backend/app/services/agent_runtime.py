@@ -335,6 +335,7 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             strategy,
             context.request.config,
             context.request.validation,
+            strategy_ir=compilation.strategy_ir,
         )
         persist_walk_forward(
             context.session,
@@ -344,6 +345,7 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             data=data,
             validation=context.request.validation,
             execution=execution,
+            strategy_ir=compilation.strategy_ir,
         )
         result = execution.result
         return {

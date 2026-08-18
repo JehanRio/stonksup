@@ -45,11 +45,16 @@ const formatMetric = (value: number) =>
   `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
 
 const parameterLabel = (name: string) => ({
+  entry_ema_period: '入场 EMA 周期',
   ema_period: 'EMA 周期',
   fast_period: '快速均线',
   lookback_period: '突破窗口',
   rsi_period: 'RSI 周期',
-}[name] ?? name);
+}[name] ?? (
+  name.startsWith('indicator.') && name.endsWith('.period')
+    ? `${name.split('.')[1].toUpperCase()} 指标周期`
+    : name
+));
 
 const objectiveLabel = (objective: string) => ({
   calmar: 'Calmar',

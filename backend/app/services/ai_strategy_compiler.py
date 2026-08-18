@@ -21,7 +21,7 @@ from app.services.strategy_compiler import (
     SELL_WORDS,
     compile_strategy,
 )
-from app.services.strategy_ir import build_strategy_manifest
+from app.services.strategy_ir import build_strategy_manifest, ensure_search_parameters
 
 
 AI_COMPILER_VERSION = "llm-to-strategy-ir.v1"
@@ -277,7 +277,10 @@ def compile_strategy_ir_candidate(
             candidate = json.loads(candidate)
         if not isinstance(candidate, dict):
             raise ValueError("strategy_ir must be a JSON object")
-        strategy_ir = StrategyIR.model_validate(candidate)
+        strategy_ir = ensure_search_parameters(
+            StrategyIR.model_validate(candidate),
+            replace=True,
+        )
         validate_ai_strategy_ir(prompt, strategy_ir)
         if strategy_ir.symbol != baseline.strategy.symbol:
             raise ValueError(

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from statistics import mean, stdev
 
 from app.schemas.backtests import BacktestConfig, BacktestResult, StrategyKind, StrategySpec
+from app.schemas.strategy_ir import StrategyIR
 from app.schemas.walk_forward import (
     ParameterSurfacePoint,
     ValidationMetrics,
@@ -19,6 +20,7 @@ from app.schemas.walk_forward import (
 from app.services.backtest_analysis import enrich_backtest_result
 from app.services.backtest_data import LoadedBacktestData
 from app.services.backtest_engine import run_backtest
+from app.services.strategy_ir import ensure_search_parameters, strategy_ir_hash
 
 
 ENGINE_NAME = "stonksup-walk-forward.v1"
@@ -50,17 +52,38 @@ class _Candidate:
     robust_score: float
     eligible: bool
     result: BacktestResult
+    strategy: StrategySpec
+    strategy_ir: StrategyIR | None
 
 
-def _primary_parameter(strategy: StrategySpec) -> str:
+@dataclass(frozen=True)
+class _SearchTarget:
+    name: str
+    strategy_field: str | None = None
+    indicator_id: str | None = None
+
+
+def _primary_parameter(
+    strategy: StrategySpec,
+    strategy_ir: StrategyIR | None,
+) -> _SearchTarget:
     if strategy.kind == StrategyKind.CUSTOM_IR:
-        raise ValueError("Walk-forward parameter search does not support custom IR yet")
-    return {
+        if strategy_ir is None:
+            raise ValueError("Custom IR walk-forward requires an explicit Strategy IR")
+        if not strategy_ir.search_parameters:
+            raise ValueError("Custom IR has no declared search parameter")
+        parameter = strategy_ir.search_parameters[0]
+        return _SearchTarget(
+            name=f"indicator.{parameter.indicator_id}.period",
+            indicator_id=parameter.indicator_id,
+        )
+    field = {
         StrategyKind.EMA_PULLBACK: "entry_ema_period",
         StrategyKind.MA_CROSSOVER: "fast_period",
         StrategyKind.MOMENTUM_BREAKOUT: "lookback_period",
         StrategyKind.RSI_MEAN_REVERSION: "rsi_period",
     }[strategy.kind]
+    return _SearchTarget(name=field, strategy_field=field)
 
 
 def _stop_values(start: float, end: float, step: float) -> list[float]:
@@ -68,20 +91,49 @@ def _stop_values(start: float, end: float, step: float) -> list[float]:
     return [round(start + index * step, 6) for index in range(count + 1)]
 
 
-def _candidate_strategy(
+def _candidate_contract(
     strategy: StrategySpec,
-    parameter: str,
+    strategy_ir: StrategyIR | None,
+    target: _SearchTarget,
     period: int,
     stop_loss: float,
-) -> StrategySpec | None:
+) -> tuple[StrategySpec, StrategyIR | None] | None:
     try:
-        return StrategySpec.model_validate(
+        candidate_strategy = StrategySpec.model_validate(
             {
                 **strategy.model_dump(),
-                parameter: period,
+                **(
+                    {target.strategy_field: period}
+                    if target.strategy_field is not None
+                    else {}
+                ),
                 "stop_loss_percent": stop_loss,
             }
         )
+        if target.indicator_id is None:
+            return candidate_strategy, None
+        if strategy_ir is None:
+            return None
+        indicators = [
+            item.model_copy(update={"period": period})
+            if item.id == target.indicator_id
+            else item
+            for item in strategy_ir.indicators
+        ]
+        if all(item.id != target.indicator_id for item in strategy_ir.indicators):
+            return None
+        candidate_ir = StrategyIR.model_validate(
+            strategy_ir.model_copy(
+                update={
+                    "indicators": indicators,
+                    "risk": strategy_ir.risk.model_copy(
+                        update={"stop_loss_percent": stop_loss}
+                    ),
+                },
+                deep=True,
+            ).model_dump(mode="json")
+        )
+        return candidate_strategy, candidate_ir
     except ValueError:
         return None
 
@@ -238,6 +290,8 @@ def run_walk_forward(
     strategy: StrategySpec,
     config: BacktestConfig,
     validation: WalkForwardConfig,
+    *,
+    strategy_ir: StrategyIR | None = None,
 ) -> WalkForwardExecution:
     rows = loaded.rows
     required = validation.train_bars + validation.test_bars * 2
@@ -247,8 +301,16 @@ def run_walk_forward(
             f"{required} bars for one parameter-selection window and two test windows"
         )
 
+    executable_ir = (
+        ensure_search_parameters(strategy_ir)
+        if strategy.kind == StrategyKind.CUSTOM_IR and strategy_ir is not None
+        else strategy_ir
+    )
+    if executable_ir is not None and executable_ir.symbol != strategy.symbol:
+        raise ValueError("Strategy IR symbol must match the strategy specification")
+
     search = validation.search
-    parameter = _primary_parameter(strategy)
+    target = _primary_parameter(strategy, executable_ir)
     period_values = list(
         range(search.period_min, search.period_max + 1, search.period_step)
     )
@@ -279,16 +341,23 @@ def run_walk_forward(
 
         for period in period_values:
             for stop_loss in stop_values:
-                candidate_strategy = _candidate_strategy(
+                candidate_contract = _candidate_contract(
                     strategy,
-                    parameter,
+                    executable_ir,
+                    target,
                     period,
                     stop_loss,
                 )
-                if candidate_strategy is None:
+                if candidate_contract is None:
                     continue
+                candidate_strategy, candidate_ir = candidate_contract
                 candidate_result = enrich_backtest_result(
-                    run_backtest(train_rows, candidate_strategy, config),
+                    run_backtest(
+                        train_rows,
+                        candidate_strategy,
+                        config,
+                        strategy_ir=candidate_ir,
+                    ),
                     train_loaded,
                     config,
                 )
@@ -301,6 +370,8 @@ def run_walk_forward(
                         robust_score=score,
                         eligible=candidate_result.trade_count >= search.minimum_trades,
                         result=candidate_result,
+                        strategy=candidate_strategy,
+                        strategy_ir=candidate_ir,
                     )
                 )
 
@@ -314,14 +385,6 @@ def run_walk_forward(
             selection_pool,
             key=lambda item: (item.robust_score, item.score, -item.period, -item.stop_loss),
         )
-        selected_strategy = _candidate_strategy(
-            strategy,
-            parameter,
-            selected.period,
-            selected.stop_loss,
-        )
-        assert selected_strategy is not None
-
         test_execution_rows = rows[train_start : test_cursor + validation.test_bars]
         test_loaded = _loaded_slice(
             loaded,
@@ -332,8 +395,9 @@ def run_walk_forward(
         test_result = enrich_backtest_result(
             run_backtest(
                 test_execution_rows,
-                selected_strategy,
+                selected.strategy,
                 config,
+                strategy_ir=selected.strategy_ir,
                 trade_start_date=test_rows[0].trading_date,
             ),
             test_loaded,
@@ -363,7 +427,7 @@ def run_walk_forward(
                 train_end=train_rows[-1].trading_date.isoformat(),
                 test_start=test_rows[0].trading_date.isoformat(),
                 test_end=test_rows[-1].trading_date.isoformat(),
-                primary_parameter=parameter,
+                primary_parameter=target.name,
                 selected_period=selected.period,
                 selected_stop_loss=selected.stop_loss,
                 objective_score=selected.score,
@@ -445,6 +509,7 @@ def run_walk_forward(
     experiment_payload = "|".join(
         [
             strategy.model_dump_json(),
+            strategy_ir_hash(executable_ir) if executable_ir is not None else "",
             config.model_dump_json(),
             validation.model_dump_json(),
             loaded.quality.strategy_hash,
@@ -465,7 +530,7 @@ def run_walk_forward(
         benchmark_symbol=loaded.benchmark_symbol,
         adjustment=loaded.adjustment,
         objective=search.objective,
-        primary_parameter=parameter,
+        primary_parameter=target.name,
         train_bars=validation.train_bars,
         test_bars=validation.test_bars,
         window_count=len(windows),

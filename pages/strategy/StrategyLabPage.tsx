@@ -122,6 +122,26 @@ const contractName = (strategy: StrategySpec) => {
   return `${strategy.symbol} RSI${strategy.rsiPeriod} 回归`;
 };
 
+const alignWalkForwardSearch = (
+  compilation: StrategyCompilation,
+  current: WalkForwardConfig,
+): WalkForwardConfig => {
+  const target = compilation.strategyIr.searchParameters[0];
+  const indicator = compilation.strategyIr.indicators.find(
+    (item) => item.id === target?.indicatorId,
+  );
+  if (!indicator) return current;
+  return {
+    ...current,
+    search: {
+      ...current.search,
+      periodMin: Math.max(2, indicator.period - 5),
+      periodMax: Math.min(250, indicator.period + 5),
+      periodStep: 1,
+    },
+  };
+};
+
 const templates: Array<{
   kind: StrategyKind;
   label: string;
@@ -259,6 +279,7 @@ const StrategyLabPage: React.FC = () => {
     (compilation && !compilation.executable)
     || (definition.kind === 'custom_ir' && !compilation),
   );
+  const searchTarget = compilation?.strategyIr.searchParameters[0];
 
   const compileCurrentPrompt = () => (
     compilerMode === 'ai'
@@ -337,6 +358,7 @@ const StrategyLabPage: React.FC = () => {
       const nextCompilation = await compileStrategy(template.prompt, kind);
       setCompilation(nextCompilation);
       setDefinition(nextCompilation.strategy);
+      setWalkForwardConfig((current) => alignWalkForwardSearch(nextCompilation, current));
       setPromptDirty(false);
       setStatus('ready');
     } catch (error) {
@@ -354,9 +376,7 @@ const StrategyLabPage: React.FC = () => {
       const nextCompilation = await compileCurrentPrompt();
       setCompilation(nextCompilation);
       setDefinition(nextCompilation.strategy);
-      if (nextCompilation.strategy.kind === 'custom_ir') {
-        setValidationMode('backtest');
-      }
+      setWalkForwardConfig((current) => alignWalkForwardSearch(nextCompilation, current));
       setPromptDirty(false);
       setStatus('ready');
     } catch (error) {
@@ -374,6 +394,7 @@ const StrategyLabPage: React.FC = () => {
     try {
       let runDefinition = definition;
       let runCompilation = compilation;
+      let runValidation = walkForwardConfig;
       if (promptDirty) {
         const nextCompilation = await compileCurrentPrompt();
         setCompilation(nextCompilation);
@@ -384,14 +405,19 @@ const StrategyLabPage: React.FC = () => {
         }
         runDefinition = nextCompilation.strategy;
         runCompilation = nextCompilation;
+        runValidation = alignWalkForwardSearch(nextCompilation, walkForwardConfig);
+        setWalkForwardConfig(runValidation);
       }
 
       if (validationMode === 'walk_forward') {
-        if (runDefinition.kind === 'custom_ir') {
-          throw new Error('自定义 IR 暂不支持参数搜索，请先运行单次回测。');
-        }
         setWalkForwardResult(
-          await runWalkForward(runDefinition, config, runData, walkForwardConfig),
+          await runWalkForward(
+            runDefinition,
+            config,
+            runData,
+            runValidation,
+            runCompilation?.strategyIr,
+          ),
         );
       } else {
         setResult(
@@ -673,8 +699,8 @@ const StrategyLabPage: React.FC = () => {
               <div className="strategy-validation-fields">
                 <NumericField label="参数选择期" value={walkForwardConfig.trainBars} suffix="bars" min={120} max={2500} onChange={(value) => updateValidation('trainBars', value)} />
                 <NumericField label="单个测试期" value={walkForwardConfig.testBars} suffix="bars" min={20} max={504} onChange={(value) => updateValidation('testBars', value)} />
-                <NumericField label="周期下限" value={walkForwardConfig.search.periodMin} min={2} max={250} onChange={(value) => updateSearch('periodMin', value)} />
-                <NumericField label="周期上限" value={walkForwardConfig.search.periodMax} min={2} max={250} onChange={(value) => updateSearch('periodMax', value)} />
+                <NumericField label={searchTarget ? `${searchTarget.indicatorId.toUpperCase()} 周期下限` : '周期下限'} value={walkForwardConfig.search.periodMin} min={2} max={250} onChange={(value) => updateSearch('periodMin', value)} />
+                <NumericField label={searchTarget ? `${searchTarget.indicatorId.toUpperCase()} 周期上限` : '周期上限'} value={walkForwardConfig.search.periodMax} min={2} max={250} onChange={(value) => updateSearch('periodMax', value)} />
                 <NumericField label="周期步长" value={walkForwardConfig.search.periodStep} min={1} max={50} onChange={(value) => updateSearch('periodStep', value)} />
                 <NumericField label="最低交易数" value={walkForwardConfig.search.minimumTrades} min={0} max={1000} onChange={(value) => updateSearch('minimumTrades', value)} />
                 <NumericField label="止损下限" value={walkForwardConfig.search.stopLossMin} suffix="%" min={0} max={50} step={0.5} onChange={(value) => updateSearch('stopLossMin', value)} />

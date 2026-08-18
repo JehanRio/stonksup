@@ -15,8 +15,10 @@ from app.models import (
     WalkForwardWindow,
 )
 from app.schemas.backtests import BacktestConfig, BacktestDataConfig, StrategySpec
+from app.schemas.strategy_ir import StrategyIR
 from app.schemas.walk_forward import WalkForwardConfig
 from app.services.strategy_compiler import CONTRACT_VERSION
+from app.services.strategy_ir import strategy_ir_hash
 from app.services.walk_forward import WalkForwardExecution
 
 
@@ -33,6 +35,7 @@ def persist_walk_forward(
     data: BacktestDataConfig,
     validation: WalkForwardConfig,
     execution: WalkForwardExecution,
+    strategy_ir: StrategyIR | None = None,
 ) -> None:
     result = execution.result
     existing = session.scalar(
@@ -62,7 +65,15 @@ def persist_walk_forward(
         status="validated",
         contract_version=CONTRACT_VERSION,
         natural_language_prompt=prompt,
-        definition=strategy_spec.model_dump(mode="json"),
+        definition=(
+            {
+                "strategy_spec": strategy_spec.model_dump(mode="json"),
+                "strategy_ir": strategy_ir.model_dump(mode="json"),
+                "strategy_ir_hash": strategy_ir_hash(strategy_ir),
+            }
+            if strategy_ir is not None
+            else strategy_spec.model_dump(mode="json")
+        ),
     )
     now = datetime.now(UTC)
     experiment = WalkForwardExperiment(

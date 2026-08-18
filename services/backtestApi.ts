@@ -70,6 +70,12 @@ export type StrategyIR = {
     source: 'open' | 'high' | 'low' | 'close' | 'volume';
     period: number;
   }>;
+  searchParameters: Array<{
+    id: string;
+    label: string;
+    target: 'indicator_period';
+    indicatorId: string;
+  }>;
   entry: StrategyIrRule;
   exit: StrategyIrRule;
   sizing: {
@@ -301,6 +307,12 @@ type ApiStrategyIR = {
   timeframe: '1d';
   template: StrategyIR['template'];
   indicators: StrategyIR['indicators'];
+  search_parameters: Array<{
+    id: string;
+    label: string;
+    target: 'indicator_period';
+    indicator_id: string;
+  }>;
   entry: ApiStrategyIrRule;
   exit: ApiStrategyIrRule;
   sizing: StrategyIR['sizing'];
@@ -519,7 +531,7 @@ const serializeStrategy = (strategy: StrategySpec): ApiStrategySpec => ({
   long_only: strategy.longOnly,
 });
 
-const serializeStrategyIr = (strategyIr: StrategyIR): ApiStrategyIR => {
+export const serializeStrategyIr = (strategyIr: StrategyIR): ApiStrategyIR => {
   const serializeRule = (rule: StrategyIrRule): ApiStrategyIrRule => ({
     reason: rule.reason,
     when: {
@@ -540,6 +552,12 @@ const serializeStrategyIr = (strategyIr: StrategyIR): ApiStrategyIR => {
     timeframe: strategyIr.timeframe,
     template: strategyIr.template,
     indicators: strategyIr.indicators,
+    search_parameters: strategyIr.searchParameters.map((parameter) => ({
+      id: parameter.id,
+      label: parameter.label,
+      target: parameter.target,
+      indicator_id: parameter.indicatorId,
+    })),
     entry: serializeRule(strategyIr.entry),
     exit: serializeRule(strategyIr.exit),
     sizing: strategyIr.sizing,
@@ -585,6 +603,12 @@ const mapCompilation = (compilation: ApiCompilation): StrategyCompilation => ({
   compiler: compilation.compiler,
   strategyIr: {
     ...compilation.strategy_ir,
+    searchParameters: compilation.strategy_ir.search_parameters.map((parameter) => ({
+      id: parameter.id,
+      label: parameter.label,
+      target: parameter.target,
+      indicatorId: parameter.indicator_id,
+    })),
     entry: {
       ...compilation.strategy_ir.entry,
       when: {

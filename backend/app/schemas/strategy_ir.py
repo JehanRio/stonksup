@@ -31,6 +31,13 @@ class IndicatorSpec(BaseModel):
     period: int = Field(ge=2, le=500)
 
 
+class StrategySearchParameter(BaseModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    label: str = Field(min_length=1, max_length=80)
+    target: Literal["indicator_period"] = "indicator_period"
+    indicator_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+
+
 class StrategyOperand(BaseModel):
     source: Literal["field", "indicator", "constant"]
     key: str | None = None
@@ -111,6 +118,10 @@ class StrategyIR(BaseModel):
     timeframe: Literal["1d"] = "1d"
     template: StrategyTemplate
     indicators: list[IndicatorSpec] = Field(min_length=1, max_length=24)
+    search_parameters: list[StrategySearchParameter] = Field(
+        default_factory=list,
+        max_length=8,
+    )
     entry: SignalRule
     exit: SignalRule
     sizing: PositionSizing
@@ -123,6 +134,15 @@ class StrategyIR(BaseModel):
         if len(indicator_ids) != len(set(indicator_ids)):
             raise ValueError("indicator ids must be unique")
         known_indicators = set(indicator_ids)
+        search_parameter_ids = [item.id for item in self.search_parameters]
+        if len(search_parameter_ids) != len(set(search_parameter_ids)):
+            raise ValueError("search parameter ids must be unique")
+        for parameter in self.search_parameters:
+            if parameter.indicator_id not in known_indicators:
+                raise ValueError(
+                    f"search parameter references unknown indicator: "
+                    f"{parameter.indicator_id}"
+                )
         for rule in (self.entry, self.exit):
             for condition in rule.when.conditions:
                 for operand in (condition.left, condition.right):

@@ -70,6 +70,15 @@ const StrategyIrPreview: React.FC<Props> = ({ compilation }) => {
         ))}
       </div>
 
+      {strategyIr.searchParameters.length > 0 && (
+        <div className="strategy-ir-search-target">
+          <span>WALK-FORWARD PARAMETER</span>
+          <code>
+            {strategyIr.searchParameters[0].label} / {strategyIr.searchParameters[0].indicatorId}.period
+          </code>
+        </div>
+      )}
+
       <div className="strategy-ir-rule-grid">
         {([
           ['ENTRY', strategyIr.entry],

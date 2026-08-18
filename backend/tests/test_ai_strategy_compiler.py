@@ -164,10 +164,27 @@ def test_model_compiles_mixed_strategy_to_executable_ir() -> None:
     assert compilation.strategy_ir.entry.when.mode == "all"
     assert len(compilation.strategy_ir.entry.when.conditions) == 3
     assert compilation.strategy_ir.entry.when.conditions[2].right.multiplier == 1.5
+    assert compilation.strategy_ir.search_parameters[0].indicator_id == "ema20"
     assert {"close", "high", "low", "open", "volume"}.issubset(
         compilation.manifest.required_fields
     )
     assert compilation.manifest.warmup_bars == 21
+
+
+def test_model_cannot_choose_a_different_search_target() -> None:
+    candidate = _candidate()
+    candidate["search_parameters"] = [
+        {
+            "id": "ema10_period",
+            "label": "Exit EMA period",
+            "target": "indicator_period",
+            "indicator_id": "ema10",
+        }
+    ]
+
+    compilation = compile_strategy_ir_candidate(PROMPT, candidate)
+
+    assert compilation.strategy_ir.search_parameters[0].indicator_id == "ema20"
 
 
 def test_custom_strategy_ir_executes_in_backtest_engine() -> None:

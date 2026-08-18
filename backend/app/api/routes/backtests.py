@@ -30,6 +30,7 @@ from app.services.backtest_persistence import (
 )
 from app.services.llm_provider import DeepSeekClient
 from app.services.strategy_compiler import compile_strategy, ensure_compilation_executable
+from app.services.strategy_ir import ensure_search_parameters
 from app.services.walk_forward import run_walk_forward
 from app.services.walk_forward_persistence import persist_walk_forward
 
@@ -132,6 +133,11 @@ def run_walk_forward_validation(
     settings: Settings = Depends(get_app_settings),
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[WalkForwardResult]:
+    strategy_ir = (
+        ensure_search_parameters(payload.strategy_ir)
+        if payload.strategy_ir is not None
+        else None
+    )
     loaded = load_backtest_data(
         session,
         settings,
@@ -145,6 +151,7 @@ def run_walk_forward_validation(
             payload.strategy,
             payload.config,
             payload.validation,
+            strategy_ir=strategy_ir,
         )
     except ValueError as exc:
         raise StonksUpError(
@@ -160,6 +167,7 @@ def run_walk_forward_validation(
         data=payload.data,
         validation=payload.validation,
         execution=execution,
+        strategy_ir=strategy_ir,
     )
     return success_response(request, execution.result)
 

@@ -15,6 +15,7 @@ from app.schemas.strategy_ir import (
     StrategyIR,
     StrategyManifest,
     StrategyOperand,
+    StrategySearchParameter,
 )
 
 
@@ -42,6 +43,44 @@ def _condition(
         operator=operator,
         right=right,
         tolerance_bps=tolerance_bps,
+    )
+
+
+def ensure_search_parameters(
+    strategy_ir: StrategyIR,
+    *,
+    replace: bool = False,
+) -> StrategyIR:
+    if strategy_ir.search_parameters and not replace:
+        return strategy_ir
+
+    referenced_ids = [
+        operand.key
+        for condition in strategy_ir.entry.when.conditions
+        for operand in (condition.left, condition.right)
+        if operand.source == "indicator" and operand.key is not None
+    ]
+    primary = next(
+        (
+            indicator
+            for indicator_id in referenced_ids
+            for indicator in strategy_ir.indicators
+            if indicator.id == indicator_id
+        ),
+        strategy_ir.indicators[0],
+    )
+    label = f"{primary.kind.upper()}({primary.source}) 周期"
+    return strategy_ir.model_copy(
+        update={
+            "search_parameters": [
+                StrategySearchParameter(
+                    id=f"{primary.id}_period",
+                    label=label,
+                    indicator_id=primary.id,
+                )
+            ]
+        },
+        deep=True,
     )
 
 
@@ -201,22 +240,24 @@ def build_strategy_ir(strategy: StrategySpec) -> StrategyIR:
     else:
         raise ValueError("custom_ir strategies require an explicit Strategy IR")
 
-    return StrategyIR(
-        name=strategy.name,
-        symbol=strategy.symbol,
-        timeframe=strategy.timeframe,
-        template=strategy.kind.value,
-        indicators=indicators,
-        entry=entry,
-        exit=exit_rule,
-        sizing=PositionSizing(value=strategy.allocation_percent / 100),
-        risk=RiskRules(stop_loss_percent=strategy.stop_loss_percent),
-        execution=ExecutionRules(
-            signal_at=strategy.signal_at,
-            fill_at=strategy.fill_at,
-            direction="long_only",
-            max_positions=1,
-        ),
+    return ensure_search_parameters(
+        StrategyIR(
+            name=strategy.name,
+            symbol=strategy.symbol,
+            timeframe=strategy.timeframe,
+            template=strategy.kind.value,
+            indicators=indicators,
+            entry=entry,
+            exit=exit_rule,
+            sizing=PositionSizing(value=strategy.allocation_percent / 100),
+            risk=RiskRules(stop_loss_percent=strategy.stop_loss_percent),
+            execution=ExecutionRules(
+                signal_at=strategy.signal_at,
+                fill_at=strategy.fill_at,
+                direction="long_only",
+                max_positions=1,
+            ),
+        )
     )
 
 

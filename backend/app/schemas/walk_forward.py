@@ -11,6 +11,7 @@ from app.schemas.backtests import (
     DataQualityReport,
     StrategySpec,
 )
+from app.schemas.strategy_ir import StrategyIR
 
 
 WalkForwardObjective = Literal["calmar", "sharpe", "annualized_return"]
@@ -50,6 +51,7 @@ class WalkForwardConfig(BaseModel):
 
 class RunWalkForwardRequest(BaseModel):
     strategy: StrategySpec
+    strategy_ir: StrategyIR | None = None
     config: BacktestConfig = Field(default_factory=BacktestConfig)
     data: BacktestDataConfig = Field(default_factory=BacktestDataConfig)
     validation: WalkForwardConfig = Field(default_factory=WalkForwardConfig)

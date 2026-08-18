@@ -1,8 +1,10 @@
+import { serializeStrategyIr } from './backtestApi';
 import type {
   BacktestConfig,
   BacktestDataConfig,
   DataQualityReport,
   PriceAdjustment,
+  StrategyIR,
   StrategySpec,
 } from './backtestApi';
 
@@ -326,6 +328,7 @@ export const runWalkForward = async (
   config: BacktestConfig,
   data: BacktestDataConfig,
   validation: WalkForwardConfig,
+  strategyIr?: StrategyIR,
   bars = 756,
 ): Promise<WalkForwardResult> => {
   const response = await fetch('/api/v1/backtests/walk-forward', {
@@ -333,6 +336,7 @@ export const runWalkForward = async (
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       strategy: serializeStrategy(strategy),
+      strategy_ir: strategyIr ? serializeStrategyIr(strategyIr) : null,
       config: {
         initial_capital: config.initialCapital,
         commission_bps: config.commissionBps,
