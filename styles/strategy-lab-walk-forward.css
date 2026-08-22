@@ -32,6 +32,70 @@
   gap: 12px;
 }
 
+.strategy-experiment-boundary {
+  margin-bottom: 18px;
+  border-top: 1px solid rgba(77, 141, 255, 0.42);
+  border-bottom: 1px solid var(--su-line-soft);
+  background: rgba(77, 141, 255, 0.035);
+}
+
+.strategy-experiment-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 45px;
+  padding: 0 13px;
+}
+
+.strategy-experiment-title span,
+.strategy-experiment-dimensions span {
+  color: var(--su-blue);
+  font-family: var(--su-mono);
+  font-size: 11px;
+}
+
+.strategy-experiment-title strong {
+  color: var(--su-soft);
+  font-size: 13px;
+}
+
+.strategy-experiment-dimensions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--su-line-soft);
+  border-bottom: 1px solid var(--su-line-soft);
+}
+
+.strategy-experiment-dimensions > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 13px;
+}
+
+.strategy-experiment-dimensions > div + div {
+  border-left: 1px solid var(--su-line-soft);
+}
+
+.strategy-experiment-dimensions strong {
+  color: var(--su-text);
+  font-family: var(--su-mono);
+  font-size: 18px;
+}
+
+.strategy-experiment-dimensions small,
+.strategy-experiment-boundary > p {
+  color: var(--su-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.strategy-experiment-boundary > p {
+  margin: 0;
+  padding: 11px 13px;
+}
+
 .strategy-objective-field {
   display: grid;
   grid-column: 1 / -1;
@@ -93,6 +157,128 @@
 
 .walk-forward-metrics strong {
   font-family: var(--su-mono);
+}
+
+.walk-forward-comparison {
+  margin: 20px 22px 0;
+  border: 1px solid var(--su-line-soft);
+  border-top: 2px solid var(--su-muted);
+  background: #0c0f11;
+}
+
+.walk-forward-comparison.is-experiment_outperforms {
+  border-top-color: var(--su-green);
+}
+
+.walk-forward-comparison.is-baseline_outperforms {
+  border-top-color: var(--su-red);
+}
+
+.walk-forward-comparison.is-mixed {
+  border-top-color: var(--su-amber);
+}
+
+.walk-forward-comparison > .strategy-result-heading {
+  min-height: 78px;
+  padding: 15px 17px;
+}
+
+.walk-forward-verdict {
+  display: grid;
+  max-width: 440px;
+  gap: 4px;
+  text-align: right;
+}
+
+.walk-forward-verdict strong {
+  color: var(--su-text);
+  font-size: 15px;
+}
+
+.walk-forward-verdict span {
+  color: var(--su-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.walk-forward-dimension-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--su-line-soft);
+  border-bottom: 1px solid var(--su-line-soft);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.walk-forward-dimension-strip > div {
+  display: grid;
+  align-content: center;
+  min-height: 96px;
+  gap: 6px;
+  padding: 15px 17px;
+}
+
+.walk-forward-dimension-strip > div + div {
+  border-left: 1px solid var(--su-line-soft);
+}
+
+.walk-forward-dimension-strip span,
+.walk-forward-dimension-strip small {
+  color: var(--su-muted);
+  font-size: 12px;
+}
+
+.walk-forward-dimension-strip strong {
+  color: var(--su-text);
+  font-family: var(--su-mono);
+  font-size: 20px;
+}
+
+.walk-forward-window-score strong {
+  color: var(--su-blue);
+}
+
+.walk-forward-comparison-table > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.15fr) repeat(3, minmax(100px, 1fr));
+  min-height: 46px;
+  border-bottom: 1px solid var(--su-line-soft);
+}
+
+.walk-forward-comparison-table > div:last-child {
+  border-bottom: 0;
+}
+
+.walk-forward-comparison-table > div > * {
+  display: flex;
+  align-items: center;
+  padding: 0 17px;
+  border-left: 1px solid var(--su-line-soft);
+  color: var(--su-soft);
+  font-size: 13px;
+}
+
+.walk-forward-comparison-table > div > *:first-child {
+  border-left: 0;
+}
+
+.walk-forward-comparison-table strong {
+  font-family: var(--su-mono);
+  font-size: 14px;
+}
+
+.walk-forward-comparison-table .is-header {
+  min-height: 37px;
+  background: #101417;
+}
+
+.walk-forward-comparison-table .is-header span {
+  color: var(--su-muted);
+  font-family: var(--su-mono);
+  font-size: 11px;
+}
+
+.strategy-chart-legend .baseline-line {
+  border-top: 2px dashed #d6dde5;
 }
 
 .walk-forward-warnings {
@@ -160,7 +346,7 @@
 
 .walk-forward-table {
   width: 100%;
-  min-width: 920px;
+  min-width: 1120px;
   border-collapse: collapse;
   font-family: var(--su-mono);
   font-size: 12px;
@@ -288,6 +474,76 @@
   .strategy-validation-fields,
   .walk-forward-warnings {
     grid-template-columns: 1fr;
+  }
+
+  .strategy-experiment-title,
+  .walk-forward-comparison > .strategy-result-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-top: 13px;
+    padding-bottom: 13px;
+  }
+
+  .strategy-experiment-dimensions,
+  .walk-forward-dimension-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-experiment-dimensions > div + div,
+  .walk-forward-dimension-strip > div + div {
+    border-top: 1px solid var(--su-line-soft);
+    border-left: 0;
+  }
+
+  .walk-forward-verdict {
+    text-align: left;
+  }
+
+  .walk-forward-comparison-table {
+    overflow: hidden;
+  }
+
+  .walk-forward-comparison-table > .is-header {
+    display: none;
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) > span {
+    grid-column: 1 / -1;
+    min-height: 34px;
+    border-bottom: 1px solid var(--su-line-soft);
+    border-left: 0;
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) > strong {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    padding: 9px 8px;
+    font-size: 12px;
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) > strong::before {
+    color: var(--su-muted);
+    font-family: var(--su-sans);
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) > strong:nth-child(2)::before {
+    content: '固定基线';
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) > strong:nth-child(3)::before {
+    content: '滚动选优';
+  }
+
+  .walk-forward-comparison-table > div:not(.is-header) > strong:nth-child(4)::before {
+    content: '实验差值';
   }
 
   .walk-forward-hero-side {

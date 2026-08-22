@@ -50,6 +50,30 @@ export type WalkForwardAggregate = ValidationMetrics & {
   parameterStability: number;
 };
 
+export type SearchDimension = {
+  name: string;
+  baseline: number;
+  minimum: number;
+  maximum: number;
+  step: number;
+  candidateCount: number;
+  optimized: boolean;
+};
+
+export type WalkForwardComparison = {
+  baseline: WalkForwardAggregate;
+  totalReturnDelta: number;
+  annualizedReturnDelta: number;
+  maxDrawdownImprovement: number;
+  sharpeDelta: number;
+  calmarDelta: number;
+  tradeCountDelta: number;
+  experimentWins: number;
+  baselineWins: number;
+  ties: number;
+  verdict: 'experiment_outperforms' | 'baseline_outperforms' | 'mixed';
+};
+
 export type WalkForwardWindow = {
   sequence: number;
   trainStart: string;
@@ -66,6 +90,8 @@ export type WalkForwardWindow = {
   usedFallback: boolean;
   train: ValidationMetrics;
   test: ValidationMetrics;
+  baselineTest: ValidationMetrics;
+  testReturnDelta: number;
 };
 
 export type ParameterSurfacePoint = {
@@ -80,6 +106,7 @@ export type ParameterSurfacePoint = {
 export type WalkForwardCurvePoint = {
   date: string;
   strategy: number;
+  baseline: number;
   asset: number;
   benchmark: number | null;
   drawdown: number;
@@ -103,6 +130,8 @@ export type WalkForwardResult = {
   candidateCount: number;
   overfittingRisk: 'low' | 'medium' | 'high';
   aggregate: WalkForwardAggregate;
+  comparison: WalkForwardComparison;
+  searchDimensions: SearchDimension[];
   averageTrainScore: number;
   averageTestScore: number;
   windows: WalkForwardWindow[];
@@ -131,6 +160,17 @@ type ApiMetrics = {
   win_rate: number;
 };
 
+type ApiAggregate = ApiMetrics & {
+  initial_capital: number;
+  final_equity: number;
+  asset_return: number;
+  benchmark_return: number;
+  excess_return: number;
+  relative_return: number;
+  annualized_volatility: number;
+  parameter_stability: number;
+};
+
 type ApiWalkForwardResult = {
   experiment_id: string;
   symbol: string;
@@ -147,16 +187,29 @@ type ApiWalkForwardResult = {
   window_count: number;
   candidate_count: number;
   overfitting_risk: 'low' | 'medium' | 'high';
-  aggregate: ApiMetrics & {
-    initial_capital: number;
-    final_equity: number;
-    asset_return: number;
-    benchmark_return: number;
-    excess_return: number;
-    relative_return: number;
-    annualized_volatility: number;
-    parameter_stability: number;
+  aggregate: ApiAggregate;
+  comparison: {
+    baseline: ApiAggregate;
+    total_return_delta: number;
+    annualized_return_delta: number;
+    max_drawdown_improvement: number;
+    sharpe_delta: number;
+    calmar_delta: number;
+    trade_count_delta: number;
+    experiment_wins: number;
+    baseline_wins: number;
+    ties: number;
+    verdict: 'experiment_outperforms' | 'baseline_outperforms' | 'mixed';
   };
+  search_dimensions: Array<{
+    name: string;
+    baseline: number;
+    minimum: number;
+    maximum: number;
+    step: number;
+    candidate_count: number;
+    optimized: boolean;
+  }>;
   average_train_score: number;
   average_test_score: number;
   windows: Array<{
@@ -175,6 +228,8 @@ type ApiWalkForwardResult = {
     used_fallback: boolean;
     train: ApiMetrics;
     test: ApiMetrics;
+    baseline_test: ApiMetrics;
+    test_return_delta: number;
   }>;
   parameter_surface: Array<{
     period: number;
@@ -187,6 +242,7 @@ type ApiWalkForwardResult = {
   equity_curve: Array<{
     date: string;
     strategy: number;
+    baseline: number;
     asset: number;
     benchmark: number | null;
     drawdown: number;
@@ -249,6 +305,18 @@ const mapMetrics = (metrics: ApiMetrics): ValidationMetrics => ({
   winRate: metrics.win_rate,
 });
 
+const mapAggregate = (aggregate: ApiAggregate): WalkForwardAggregate => ({
+  ...mapMetrics(aggregate),
+  initialCapital: aggregate.initial_capital,
+  finalEquity: aggregate.final_equity,
+  assetReturn: aggregate.asset_return,
+  benchmarkReturn: aggregate.benchmark_return,
+  excessReturn: aggregate.excess_return,
+  relativeReturn: aggregate.relative_return,
+  annualizedVolatility: aggregate.annualized_volatility,
+  parameterStability: aggregate.parameter_stability,
+});
+
 const mapResult = (result: ApiWalkForwardResult): WalkForwardResult => ({
   experimentId: result.experiment_id,
   symbol: result.symbol,
@@ -265,17 +333,29 @@ const mapResult = (result: ApiWalkForwardResult): WalkForwardResult => ({
   windowCount: result.window_count,
   candidateCount: result.candidate_count,
   overfittingRisk: result.overfitting_risk,
-  aggregate: {
-    ...mapMetrics(result.aggregate),
-    initialCapital: result.aggregate.initial_capital,
-    finalEquity: result.aggregate.final_equity,
-    assetReturn: result.aggregate.asset_return,
-    benchmarkReturn: result.aggregate.benchmark_return,
-    excessReturn: result.aggregate.excess_return,
-    relativeReturn: result.aggregate.relative_return,
-    annualizedVolatility: result.aggregate.annualized_volatility,
-    parameterStability: result.aggregate.parameter_stability,
+  aggregate: mapAggregate(result.aggregate),
+  comparison: {
+    baseline: mapAggregate(result.comparison.baseline),
+    totalReturnDelta: result.comparison.total_return_delta,
+    annualizedReturnDelta: result.comparison.annualized_return_delta,
+    maxDrawdownImprovement: result.comparison.max_drawdown_improvement,
+    sharpeDelta: result.comparison.sharpe_delta,
+    calmarDelta: result.comparison.calmar_delta,
+    tradeCountDelta: result.comparison.trade_count_delta,
+    experimentWins: result.comparison.experiment_wins,
+    baselineWins: result.comparison.baseline_wins,
+    ties: result.comparison.ties,
+    verdict: result.comparison.verdict,
   },
+  searchDimensions: result.search_dimensions.map((dimension) => ({
+    name: dimension.name,
+    baseline: dimension.baseline,
+    minimum: dimension.minimum,
+    maximum: dimension.maximum,
+    step: dimension.step,
+    candidateCount: dimension.candidate_count,
+    optimized: dimension.optimized,
+  })),
   averageTrainScore: result.average_train_score,
   averageTestScore: result.average_test_score,
   windows: result.windows.map((window) => ({
@@ -294,6 +374,8 @@ const mapResult = (result: ApiWalkForwardResult): WalkForwardResult => ({
     usedFallback: window.used_fallback,
     train: mapMetrics(window.train),
     test: mapMetrics(window.test),
+    baselineTest: mapMetrics(window.baseline_test),
+    testReturnDelta: window.test_return_delta,
   })),
   parameterSurface: result.parameter_surface.map((point) => ({
     period: point.period,

@@ -17,6 +17,11 @@ from app.schemas.strategy_ir import StrategyIR
 
 WalkForwardObjective = Literal["calmar", "sharpe", "annualized_return"]
 OverfittingRisk = Literal["low", "medium", "high"]
+ExperimentVerdict = Literal[
+    "experiment_outperforms",
+    "baseline_outperforms",
+    "mixed",
+]
 
 
 class ParameterSearchConfig(BaseModel):
@@ -80,9 +85,34 @@ class WalkForwardAggregate(ValidationMetrics):
     parameter_stability: float
 
 
+class SearchDimension(BaseModel):
+    name: str
+    baseline: float
+    minimum: float
+    maximum: float
+    step: float
+    candidate_count: int
+    optimized: bool
+
+
+class WalkForwardComparison(BaseModel):
+    baseline: WalkForwardAggregate
+    total_return_delta: float
+    annualized_return_delta: float
+    max_drawdown_improvement: float
+    sharpe_delta: float
+    calmar_delta: float
+    trade_count_delta: int
+    experiment_wins: int
+    baseline_wins: int
+    ties: int
+    verdict: ExperimentVerdict
+
+
 class WalkForwardCurvePoint(BaseModel):
     date: str
     strategy: float
+    baseline: float
     asset: float
     benchmark: float | None
     drawdown: float
@@ -105,6 +135,8 @@ class WalkForwardWindowResult(BaseModel):
     used_fallback: bool
     train: ValidationMetrics
     test: ValidationMetrics
+    baseline_test: ValidationMetrics
+    test_return_delta: float
 
 
 class ParameterSurfacePoint(BaseModel):
@@ -133,6 +165,8 @@ class WalkForwardResult(BaseModel):
     candidate_count: int
     overfitting_risk: OverfittingRisk
     aggregate: WalkForwardAggregate
+    comparison: WalkForwardComparison
+    search_dimensions: list[SearchDimension]
     average_train_score: float
     average_test_score: float
     windows: list[WalkForwardWindowResult]

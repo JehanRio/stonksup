@@ -280,6 +280,37 @@ const StrategyLabPage: React.FC = () => {
     || (definition.kind === 'custom_ir' && !compilation),
   );
   const searchTarget = compilation?.strategyIr.searchParameters[0];
+  const periodCandidateCount = Math.max(
+    0,
+    Math.floor(
+      (walkForwardConfig.search.periodMax - walkForwardConfig.search.periodMin)
+      / walkForwardConfig.search.periodStep,
+    ) + 1,
+  );
+  const stopCandidateCount = Math.max(
+    0,
+    Math.floor(
+      (walkForwardConfig.search.stopLossMax - walkForwardConfig.search.stopLossMin)
+      / walkForwardConfig.search.stopLossStep + 1e-9,
+    ) + 1,
+  );
+  const primaryBaseline = (() => {
+    if (searchTarget) {
+      return compilation?.strategyIr.indicators.find(
+        (item) => item.id === searchTarget.indicatorId,
+      )?.period ?? definition.emaPeriod;
+    }
+    if (definition.kind === 'ema_pullback') return definition.entryEmaPeriod;
+    if (definition.kind === 'ma_crossover') return definition.fastPeriod;
+    if (definition.kind === 'momentum_breakout') return definition.lookbackPeriod;
+    return definition.rsiPeriod;
+  })();
+  const primaryDimensionLabel = searchTarget
+    ? `${searchTarget.indicatorId.toUpperCase()} 周期`
+    : '主周期';
+  const stopLossBaseline = definition.kind === 'custom_ir'
+    ? compilation?.strategyIr.risk.stopLossPercent ?? definition.stopLossPercent
+    : definition.stopLossPercent;
 
   const compileCurrentPrompt = () => (
     compilerMode === 'ai'
@@ -695,6 +726,27 @@ const StrategyLabPage: React.FC = () => {
                   <h2>样本外验证</h2>
                   <p>每个测试期只使用此前参数选择期确定的规则。</p>
                 </div>
+              </div>
+              <div className="strategy-experiment-boundary">
+                <div className="strategy-experiment-title">
+                  <span>CONTROLLED EXPERIMENT</span>
+                  <strong>最多两维，固定基线不参与选优</strong>
+                </div>
+                <div className="strategy-experiment-dimensions">
+                  <div>
+                    <span>维度 01 · {primaryDimensionLabel}</span>
+                    <strong>{walkForwardConfig.search.periodMin}–{walkForwardConfig.search.periodMax}</strong>
+                    <small>基线 {primaryBaseline} · {periodCandidateCount} 个候选</small>
+                  </div>
+                  <div>
+                    <span>维度 02 · 保护止损</span>
+                    <strong>{walkForwardConfig.search.stopLossMin}–{walkForwardConfig.search.stopLossMax}%</strong>
+                    <small>基线 {stopLossBaseline}% · {stopCandidateCount} 个候选</small>
+                  </div>
+                </div>
+                <p>
+                  每窗口 {periodCandidateCount * stopCandidateCount} 组组合，实验组与固定基线使用相同测试期和交易成本。
+                </p>
               </div>
               <div className="strategy-validation-fields">
                 <NumericField label="参数选择期" value={walkForwardConfig.trainBars} suffix="bars" min={120} max={2500} onChange={(value) => updateValidation('trainBars', value)} />

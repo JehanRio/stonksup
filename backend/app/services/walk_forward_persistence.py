@@ -90,6 +90,11 @@ def persist_walk_forward(
         },
         summary={
             "aggregate": result.aggregate.model_dump(mode="json"),
+            "comparison": result.comparison.model_dump(mode="json"),
+            "search_dimensions": [
+                dimension.model_dump(mode="json")
+                for dimension in result.search_dimensions
+            ],
             "average_train_score": result.average_train_score,
             "average_test_score": result.average_test_score,
             "overfitting_risk": result.overfitting_risk,
@@ -124,7 +129,11 @@ def persist_walk_forward(
                 "stop_loss_percent": result_window.selected_stop_loss,
             },
             train_metrics=result_window.train.model_dump(mode="json"),
-            test_metrics=result_window.test.model_dump(mode="json"),
+            test_metrics={
+                **result_window.test.model_dump(mode="json"),
+                "baseline": result_window.baseline_test.model_dump(mode="json"),
+                "return_delta": result_window.test_return_delta,
+            },
             objective_score=_decimal(result_window.objective_score),
             robust_score=_decimal(result_window.robust_score),
             candidate_count=result_window.candidate_count,

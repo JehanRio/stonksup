@@ -295,11 +295,13 @@
 
   .signal-funnel-heading {
     align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .signal-funnel-heading > span {
-    max-width: 42%;
-    text-align: right;
+    max-width: none;
+    text-align: left;
   }
 
   .signal-condition-row {

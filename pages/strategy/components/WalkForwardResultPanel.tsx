@@ -51,6 +51,7 @@ const parameterLabel = (name: string) => ({
   fast_period: '快速均线',
   lookback_period: '突破窗口',
   rsi_period: 'RSI 周期',
+  stop_loss_percent: '保护止损',
 }[name] ?? (
   name.startsWith('indicator.') && name.endsWith('.period')
     ? `${name.split('.')[1].toUpperCase()} 指标周期`
@@ -68,6 +69,14 @@ const riskLabel = {
   medium: '中风险',
   high: '高风险',
 };
+
+const verdictCopy = {
+  experiment_outperforms: ['实验胜出', '调参策略的总体收益与窗口胜负均领先固定基线。'],
+  baseline_outperforms: ['基线胜出', '固定参数更可靠，当前没有证据支持采用调参结果。'],
+  mixed: ['证据混合', '总体收益与逐窗口表现未形成一致结论。'],
+} as const;
+
+const deltaClass = (value: number) => value > 0 ? 'positive' : value < 0 ? 'negative' : '';
 
 const orderedRange = ({ start, end }: ChartRange): ChartRange =>
   start <= end ? { start, end } : { start: end, end: start };
@@ -201,6 +210,39 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
             <article><span>样本外胜率</span><strong>{formatPercent(result.aggregate.winRate)}</strong></article>
           </div>
 
+          <section className={`walk-forward-comparison is-${result.comparison.verdict}`}>
+            <div className="strategy-result-heading">
+              <div><span>01 / CONTROLLED EXPERIMENT</span><h3>固定参数基线 vs 滚动选优</h3></div>
+              <div className="walk-forward-verdict">
+                <strong>{verdictCopy[result.comparison.verdict][0]}</strong>
+                <span>{verdictCopy[result.comparison.verdict][1]}</span>
+              </div>
+            </div>
+            <div className="walk-forward-dimension-strip">
+              {result.searchDimensions.map((dimension, index) => (
+                <div key={dimension.name}>
+                  <span>维度 {String(index + 1).padStart(2, '0')} · {parameterLabel(dimension.name)}</span>
+                  <strong>{dimension.minimum}–{dimension.maximum}</strong>
+                  <small>
+                    固定基线 {dimension.baseline} · {dimension.candidateCount} 个候选 · {dimension.optimized ? '参与选优' : '保持固定'}
+                  </small>
+                </div>
+              ))}
+              <div className="walk-forward-window-score">
+                <span>窗口胜负 · 按 {objectiveLabel(result.objective)}</span>
+                <strong>{result.comparison.experimentWins} : {result.comparison.baselineWins}</strong>
+                <small>实验胜 : 基线胜 · {result.comparison.ties} 平</small>
+              </div>
+            </div>
+            <div className="walk-forward-comparison-table">
+              <div className="is-header"><span>指标</span><span>固定基线</span><span>滚动选优</span><span>实验差值</span></div>
+              <div><span>累计收益</span><strong>{formatPercent(result.comparison.baseline.totalReturn)}</strong><strong>{formatPercent(result.aggregate.totalReturn)}</strong><strong className={deltaClass(result.comparison.totalReturnDelta)}>{formatPercent(result.comparison.totalReturnDelta)}</strong></div>
+              <div><span>年化收益</span><strong>{formatPercent(result.comparison.baseline.annualizedReturn)}</strong><strong>{formatPercent(result.aggregate.annualizedReturn)}</strong><strong className={deltaClass(result.comparison.annualizedReturnDelta)}>{formatPercent(result.comparison.annualizedReturnDelta)}</strong></div>
+              <div><span>最大回撤</span><strong>{formatPercent(result.comparison.baseline.maxDrawdown)}</strong><strong>{formatPercent(result.aggregate.maxDrawdown)}</strong><strong className={deltaClass(result.comparison.maxDrawdownImprovement)}>{formatPercent(result.comparison.maxDrawdownImprovement)}</strong></div>
+              <div><span>Sharpe</span><strong>{formatMetric(result.comparison.baseline.sharpeRatio)}</strong><strong>{formatMetric(result.aggregate.sharpeRatio)}</strong><strong className={deltaClass(result.comparison.sharpeDelta)}>{formatMetric(result.comparison.sharpeDelta)}</strong></div>
+            </div>
+          </section>
+
           {result.warnings.length > 0 && (
             <section className="walk-forward-warnings">
               <div><CircleAlert size={19} /><strong>稳定性诊断</strong></div>
@@ -210,16 +252,17 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <SignalFunnelPanel
             diagnostics={result.signalDiagnostics}
-            eyebrow="01 / OOS SIGNAL FUNNEL"
+            eyebrow="02 / OOS SIGNAL FUNNEL"
             title="样本外条件命中与订单转化"
             scopeLabel={`${result.windowCount} 个测试窗口汇总`}
           />
 
           <section className="strategy-chart-section walk-forward-chart-section">
             <div className="strategy-result-heading">
-              <div><span>02 / STITCHED OOS EQUITY</span><h3>仅拼接测试期的净值</h3></div>
+              <div><span>03 / STITCHED OOS EQUITY</span><h3>仅拼接测试期的净值</h3></div>
               <div className="strategy-chart-legend phase2">
-                <span><i className="strategy-line" />Strategy</span>
+                <span><i className="strategy-line" />滚动选优</span>
+                <span><i className="baseline-line" />固定基线</span>
                 <span><i className="asset-line" />{result.symbol}</span>
                 <span><i className="independent-line" />{result.benchmarkSymbol}</span>
               </div>
@@ -256,6 +299,7 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
                     />
                   )}
                   <Line type="monotone" dataKey="strategy" name="OOS Strategy" stroke="#4d8dff" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="baseline" name="Fixed Baseline" stroke="#d6dde5" strokeWidth={1.8} strokeDasharray="7 4" dot={false} isAnimationActive={false} />
                   <Line type="monotone" dataKey="asset" name={`${result.symbol} Buy & Hold`} stroke="#7a8791" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
                   <Line type="monotone" dataKey="benchmark" name={result.benchmarkSymbol} stroke="#e7b84b" strokeWidth={1.6} strokeDasharray="2 5" dot={false} connectNulls={false} isAnimationActive={false} />
                 </LineChart>
@@ -265,12 +309,12 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <section className="walk-forward-ledger-section">
             <div className="strategy-result-heading">
-              <div><span>03 / WINDOW LEDGER</span><h3>每个窗口的冻结参数与测试表现</h3></div>
+              <div><span>04 / WINDOW LEDGER</span><h3>每个窗口的冻结参数与测试表现</h3></div>
               <span>{parameterLabel(result.primaryParameter)}</span>
             </div>
             <div className="walk-forward-table-wrap">
               <table className="walk-forward-table">
-                <thead><tr><th>窗口</th><th>参数选择期</th><th>测试期</th><th>周期</th><th>止损</th><th>选择期目标</th><th>测试期收益</th><th>测试期回撤</th><th>交易</th></tr></thead>
+                <thead><tr><th>窗口</th><th>参数选择期</th><th>测试期</th><th>周期</th><th>止损</th><th>选择期目标</th><th>实验收益</th><th>基线收益</th><th>收益差</th><th>测试期回撤</th><th>交易</th></tr></thead>
                 <tbody>
                   {result.windows.map((window) => (
                     <tr key={window.sequence} className={window.usedFallback ? 'is-fallback' : ''}>
@@ -281,6 +325,8 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
                       <td>{window.selectedStopLoss.toFixed(1)}%</td>
                       <td>{formatMetric(window.objectiveScore)}</td>
                       <td className={window.test.totalReturn >= 0 ? 'positive' : 'negative'}>{formatPercent(window.test.totalReturn)}</td>
+                      <td>{formatPercent(window.baselineTest.totalReturn)}</td>
+                      <td className={deltaClass(window.testReturnDelta)}>{formatPercent(window.testReturnDelta)}</td>
                       <td className="negative">{formatPercent(window.test.maxDrawdown)}</td>
                       <td>{window.test.tradeCount}</td>
                     </tr>
@@ -292,7 +338,7 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <section className="walk-forward-ledger-section">
             <div className="strategy-result-heading">
-              <div><span>04 / PARAMETER SURFACE</span><h3>全部候选参数，不只展示赢家</h3></div>
+              <div><span>05 / PARAMETER SURFACE</span><h3>全部候选参数，不只展示赢家</h3></div>
               <span>{result.parameterSurface.length} 组参数</span>
             </div>
             <div className="walk-forward-table-wrap compact">
@@ -312,11 +358,11 @@ const WalkForwardResultPanel: React.FC<Props> = ({ status, result }) => {
 
           <div className="walk-forward-audit-grid">
             <section>
-              <div className="strategy-result-heading"><div><span>05 / ASSUMPTIONS</span><h3>验证边界</h3></div><CircleAlert size={20} /></div>
+              <div className="strategy-result-heading"><div><span>06 / ASSUMPTIONS</span><h3>验证边界</h3></div><CircleAlert size={20} /></div>
               <ul>{result.assumptions.map((item) => <li key={item}>{item}</li>)}</ul>
             </section>
             <section>
-              <div className="strategy-result-heading"><div><span>06 / AUDIT</span><h3>无穿越检查</h3></div><ShieldCheck size={20} /></div>
+              <div className="strategy-result-heading"><div><span>07 / AUDIT</span><h3>无穿越检查</h3></div><ShieldCheck size={20} /></div>
               <ul>{result.audit.map((item, index) => <li key={`${index}-${item}`} className={item.startsWith('PASS') ? 'is-pass' : ''}>{item}</li>)}</ul>
             </section>
           </div>

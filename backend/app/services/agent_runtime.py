@@ -50,6 +50,7 @@ compile_strategy 必须忠实处理用户原文，不得改写、删除或弱化
 如果编译结果 executable=false，必须停止调用后续工具，逐条说明 issues，并请用户补充或改写策略。
 最终回答必须区分：计算事实、风险判断、仍需验证的限制。使用中文，简洁具体。
 若交易数为零或很少，必须引用 signal_diagnostics 的可计算次数、条件命中、联合命中和订单数解释原因，不得猜测。
+解释样本外验证时，必须将调参实验与固定参数基线比较；若未超过基线，不得建议采用调参参数。
 如果工具返回错误，说明原因并尝试使用已有工具恢复，不得声称工具已经成功。
 """
 
@@ -365,6 +366,25 @@ def _execute_tool(context: _AgentContext, name: str, arguments: dict[str, Any]) 
             "calmar_ratio": result.aggregate.calmar_ratio,
             "trade_count": result.aggregate.trade_count,
             "parameter_stability": result.aggregate.parameter_stability,
+            "controlled_experiment": {
+                "search_dimensions": [
+                    dimension.model_dump(mode="json")
+                    for dimension in result.search_dimensions
+                ],
+                "fixed_baseline": result.comparison.baseline.model_dump(mode="json"),
+                "total_return_delta": result.comparison.total_return_delta,
+                "annualized_return_delta": result.comparison.annualized_return_delta,
+                "max_drawdown_improvement": (
+                    result.comparison.max_drawdown_improvement
+                ),
+                "sharpe_delta": result.comparison.sharpe_delta,
+                "window_score": {
+                    "experiment_wins": result.comparison.experiment_wins,
+                    "baseline_wins": result.comparison.baseline_wins,
+                    "ties": result.comparison.ties,
+                },
+                "verdict": result.comparison.verdict,
+            },
             "overfitting_risk": result.overfitting_risk,
             "signal_diagnostics": result.signal_diagnostics.model_dump(mode="json"),
             "warnings": result.warnings,

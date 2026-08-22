@@ -127,7 +127,13 @@ def test_walk_forward_is_reproducible_separated_and_persisted(client) -> None:
     assert result["experiment_id"] == second.json()["data"]["experiment_id"]
     assert result["window_count"] == 4
     assert result["candidate_count"] == 24
+    assert len(result["search_dimensions"]) == 2
+    assert all(item["optimized"] for item in result["search_dimensions"])
+    assert result["comparison"]["experiment_wins"] + result["comparison"][
+        "baseline_wins"
+    ] + result["comparison"]["ties"] == result["window_count"]
     assert len(result["equity_curve"]) == 160
+    assert all("baseline" in point for point in result["equity_curve"])
     assert result["signal_diagnostics"]["entry"]["evaluated_bars"] > 0
     assert result["signal_diagnostics"]["entry"]["conditions"][0][
         "expression_variants"
@@ -153,6 +159,65 @@ def test_walk_forward_is_reproducible_separated_and_persisted(client) -> None:
         assert session.scalar(select(func.count(WalkForwardExperiment.id))) == 1
         assert session.scalar(select(func.count(WalkForwardWindow.id))) == 4
         assert session.scalar(select(func.count(WalkForwardTrial.id))) == 24
+        experiment = session.scalar(select(WalkForwardExperiment))
+        assert experiment is not None
+        assert "comparison" in experiment.summary
+        assert len(experiment.summary["search_dimensions"]) == 2
+        stored_window = session.scalar(select(WalkForwardWindow).limit(1))
+        assert stored_window is not None
+        assert "baseline" in stored_window.test_metrics
+
+
+def test_fixed_search_matches_frozen_baseline_exactly(client) -> None:
+    response = client.post(
+        "/api/v1/backtests/walk-forward",
+        json={
+            "strategy": {
+                "name": "MU fixed baseline control",
+                "symbol": "MU",
+                "kind": "ema_pullback",
+                "entry_ema_period": 5,
+                "exit_ema_period": 5,
+                "stop_loss_percent": 8,
+            },
+            "bars": 280,
+            "data": {"mode": "demo"},
+            "validation": {
+                "train_bars": 120,
+                "test_bars": 40,
+                "search": {
+                    "period_min": 5,
+                    "period_max": 5,
+                    "period_step": 1,
+                    "stop_loss_min": 8,
+                    "stop_loss_max": 8,
+                    "stop_loss_step": 1,
+                    "minimum_trades": 0,
+                    "objective": "calmar",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["candidate_count"] == result["window_count"]
+    assert all(not item["optimized"] for item in result["search_dimensions"])
+    assert result["comparison"]["verdict"] == "mixed"
+    assert result["comparison"]["experiment_wins"] == 0
+    assert result["comparison"]["baseline_wins"] == 0
+    assert result["comparison"]["ties"] == result["window_count"]
+    assert result["comparison"]["total_return_delta"] == 0
+    assert result["comparison"]["max_drawdown_improvement"] == 0
+    assert all(
+        window["test"] == window["baseline_test"]
+        and window["test_return_delta"] == 0
+        for window in result["windows"]
+    )
+    assert all(
+        point["strategy"] == point["baseline"]
+        for point in result["equity_curve"]
+    )
 
 
 def test_custom_ir_walk_forward_tunes_declared_indicator_and_persists_ir(client) -> None:

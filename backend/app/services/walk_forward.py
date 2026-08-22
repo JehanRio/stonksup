@@ -10,8 +10,10 @@ from app.schemas.backtests import BacktestConfig, BacktestResult, StrategyKind, 
 from app.schemas.strategy_ir import StrategyIR
 from app.schemas.walk_forward import (
     ParameterSurfacePoint,
+    SearchDimension,
     ValidationMetrics,
     WalkForwardAggregate,
+    WalkForwardComparison,
     WalkForwardConfig,
     WalkForwardCurvePoint,
     WalkForwardResult,
@@ -23,7 +25,7 @@ from app.services.backtest_engine import merge_signal_diagnostics, run_backtest
 from app.services.strategy_ir import ensure_search_parameters, strategy_ir_hash
 
 
-ENGINE_NAME = "stonksup-walk-forward.v1"
+ENGINE_NAME = "stonksup-walk-forward.v2"
 
 
 @dataclass
@@ -196,8 +198,10 @@ def _aggregate_metrics(
     trade_count: int,
     winning_trades: int,
     parameter_stability: float,
+    *,
+    value_field: str = "strategy",
 ) -> WalkForwardAggregate:
-    strategy_values = [point.strategy for point in curve]
+    strategy_values = [getattr(point, value_field) for point in curve]
     asset_values = [point.asset for point in curve]
     benchmark_values = [
         point.benchmark for point in curve if point.benchmark is not None
@@ -217,7 +221,11 @@ def _aggregate_metrics(
     excess = [value - daily_risk_free for value in daily_returns]
     daily_stdev = stdev(daily_returns) if len(daily_returns) > 1 else 0
     sharpe = mean(excess) / daily_stdev * math.sqrt(252) if daily_stdev else 0
-    max_drawdown = min(point.drawdown for point in curve)
+    running_peak = strategy_values[0]
+    max_drawdown = 0.0
+    for value in strategy_values:
+        running_peak = max(running_peak, value)
+        max_drawdown = min(max_drawdown, value / running_peak - 1 if running_peak else 0)
     calmar = annualized_return / abs(max_drawdown) if max_drawdown else 0
     asset_return = asset_values[-1] / initial - 1
     benchmark_return = benchmark_values[-1] / initial - 1 if benchmark_values else 0
@@ -243,6 +251,70 @@ def _aggregate_metrics(
         win_rate=winning_trades / trade_count if trade_count else 0,
         parameter_stability=parameter_stability,
     )
+
+
+def _baseline_period(
+    strategy: StrategySpec,
+    strategy_ir: StrategyIR | None,
+    target: _SearchTarget,
+) -> float:
+    if target.strategy_field is not None:
+        return float(getattr(strategy, target.strategy_field))
+    if strategy_ir is None or target.indicator_id is None:
+        raise ValueError("Walk-forward search target has no baseline value")
+    indicator = next(
+        (item for item in strategy_ir.indicators if item.id == target.indicator_id),
+        None,
+    )
+    if indicator is None:
+        raise ValueError("Walk-forward search target indicator is missing")
+    return float(indicator.period)
+
+
+def _search_dimensions(
+    strategy: StrategySpec,
+    strategy_ir: StrategyIR | None,
+    target: _SearchTarget,
+    validation: WalkForwardConfig,
+) -> list[SearchDimension]:
+    search = validation.search
+    period_count = len(range(search.period_min, search.period_max + 1, search.period_step))
+    stop_count = len(
+        _stop_values(search.stop_loss_min, search.stop_loss_max, search.stop_loss_step)
+    )
+    stop_baseline = (
+        strategy_ir.risk.stop_loss_percent
+        if strategy_ir is not None
+        else strategy.stop_loss_percent
+    )
+    return [
+        SearchDimension(
+            name=target.name,
+            baseline=_baseline_period(strategy, strategy_ir, target),
+            minimum=search.period_min,
+            maximum=search.period_max,
+            step=search.period_step,
+            candidate_count=period_count,
+            optimized=period_count > 1,
+        ),
+        SearchDimension(
+            name="stop_loss_percent",
+            baseline=stop_baseline,
+            minimum=search.stop_loss_min,
+            maximum=search.stop_loss_max,
+            step=search.stop_loss_step,
+            candidate_count=stop_count,
+            optimized=stop_count > 1,
+        ),
+    ]
+
+
+def _metrics_objective(metrics: ValidationMetrics, objective: str) -> float:
+    return {
+        "calmar": metrics.calmar_ratio,
+        "sharpe": metrics.sharpe_ratio,
+        "annualized_return": metrics.annualized_return,
+    }[objective]
 
 
 def _overfitting_diagnostics(
@@ -311,6 +383,12 @@ def run_walk_forward(
 
     search = validation.search
     target = _primary_parameter(strategy, executable_ir)
+    search_dimensions = _search_dimensions(
+        strategy,
+        executable_ir,
+        target,
+        validation,
+    )
     period_values = list(
         range(search.period_min, search.period_max + 1, search.period_step)
     )
@@ -322,6 +400,7 @@ def run_walk_forward(
     windows: list[WalkForwardWindowResult] = []
     all_trials: list[TrialRecord] = []
     selected_results: list[BacktestResult] = []
+    baseline_results: list[BacktestResult] = []
     selected_counts: Counter[tuple[int, float]] = Counter()
     surface_scores: dict[tuple[int, float], list[TrialRecord]] = defaultdict(list)
 
@@ -403,7 +482,19 @@ def run_walk_forward(
             test_loaded,
             config,
         )
+        baseline_result = enrich_backtest_result(
+            run_backtest(
+                test_execution_rows,
+                strategy,
+                config,
+                strategy_ir=executable_ir,
+                trade_start_date=test_rows[0].trading_date,
+            ),
+            test_loaded,
+            config,
+        )
         selected_results.append(test_result)
+        baseline_results.append(baseline_result)
         selected_counts[(selected.period, selected.stop_loss)] += 1
 
         for candidate in candidates:
@@ -437,22 +528,39 @@ def run_walk_forward(
                 used_fallback=used_fallback,
                 train=_metrics(selected.result),
                 test=_metrics(test_result),
+                baseline_test=_metrics(baseline_result),
+                test_return_delta=(
+                    test_result.total_return - baseline_result.total_return
+                ),
             )
         )
         test_cursor += validation.test_bars
         sequence += 1
 
     strategy_capital = config.initial_capital
+    baseline_capital = config.initial_capital
     asset_capital = config.initial_capital
     benchmark_capital = config.initial_capital
     peak = config.initial_capital
     curve: list[WalkForwardCurvePoint] = []
     trade_count = 0
     winning_trades = 0
-    for window, result in zip(windows, selected_results, strict=True):
+    baseline_trade_count = 0
+    baseline_winning_trades = 0
+    for window, result, baseline_result in zip(
+        windows,
+        selected_results,
+        baseline_results,
+        strict=True,
+    ):
         benchmark_by_date = {point.date: point.value for point in result.benchmark_curve}
+        baseline_by_date = {
+            point.date: point.strategy for point in baseline_result.equity_curve
+        }
         for point in result.equity_curve:
             strategy_value = strategy_capital * point.strategy / config.initial_capital
+            baseline_point = baseline_by_date[point.date]
+            baseline_value = baseline_capital * baseline_point / config.initial_capital
             asset_value = asset_capital * point.benchmark / config.initial_capital
             benchmark_point = benchmark_by_date.get(point.date)
             benchmark_value = (
@@ -465,6 +573,7 @@ def run_walk_forward(
                 WalkForwardCurvePoint(
                     date=point.date,
                     strategy=round(strategy_value, 2),
+                    baseline=round(baseline_value, 2),
                     asset=round(asset_value, 2),
                     benchmark=(
                         round(benchmark_value, 2)
@@ -476,11 +585,16 @@ def run_walk_forward(
                 )
             )
         strategy_capital = curve[-1].strategy
+        baseline_capital = curve[-1].baseline
         asset_capital = curve[-1].asset
         if curve[-1].benchmark is not None:
             benchmark_capital = curve[-1].benchmark
         trade_count += result.trade_count
         winning_trades += sum(1 for trade in result.trades if trade.pnl > 0)
+        baseline_trade_count += baseline_result.trade_count
+        baseline_winning_trades += sum(
+            1 for trade in baseline_result.trades if trade.pnl > 0
+        )
 
     stability = max(selected_counts.values()) / len(windows)
     aggregate = _aggregate_metrics(
@@ -490,11 +604,59 @@ def run_walk_forward(
         winning_trades,
         stability,
     )
+    baseline_aggregate = _aggregate_metrics(
+        curve,
+        config,
+        baseline_trade_count,
+        baseline_winning_trades,
+        1.0,
+        value_field="baseline",
+    )
+    experiment_wins = 0
+    baseline_wins = 0
+    ties = 0
+    for window in windows:
+        experiment_score = _metrics_objective(window.test, search.objective)
+        baseline_score = _metrics_objective(window.baseline_test, search.objective)
+        if experiment_score > baseline_score + 1e-12:
+            experiment_wins += 1
+        elif baseline_score > experiment_score + 1e-12:
+            baseline_wins += 1
+        else:
+            ties += 1
+    total_return_delta = aggregate.total_return - baseline_aggregate.total_return
+    if total_return_delta > 1e-12 and experiment_wins > baseline_wins:
+        verdict = "experiment_outperforms"
+    elif total_return_delta < -1e-12 and baseline_wins > experiment_wins:
+        verdict = "baseline_outperforms"
+    else:
+        verdict = "mixed"
+    comparison = WalkForwardComparison(
+        baseline=baseline_aggregate,
+        total_return_delta=total_return_delta,
+        annualized_return_delta=(
+            aggregate.annualized_return - baseline_aggregate.annualized_return
+        ),
+        max_drawdown_improvement=(
+            aggregate.max_drawdown - baseline_aggregate.max_drawdown
+        ),
+        sharpe_delta=aggregate.sharpe_ratio - baseline_aggregate.sharpe_ratio,
+        calmar_delta=aggregate.calmar_ratio - baseline_aggregate.calmar_ratio,
+        trade_count_delta=aggregate.trade_count - baseline_aggregate.trade_count,
+        experiment_wins=experiment_wins,
+        baseline_wins=baseline_wins,
+        ties=ties,
+        verdict=verdict,
+    )
     risk, average_train, average_test, warnings = _overfitting_diagnostics(
         windows,
         search.objective,
         aggregate,
     )
+    if comparison.verdict == "baseline_outperforms":
+        warnings.append("受控实验未超过固定参数基线，当前没有证据支持采用调参结果。")
+    elif comparison.verdict == "mixed":
+        warnings.append("受控实验与固定参数基线结论不一致，暂不宜仅凭调参结果决策。")
     surface = [
         ParameterSurfacePoint(
             period=period,
@@ -537,6 +699,8 @@ def run_walk_forward(
         candidate_count=len(all_trials),
         overfitting_risk=risk,
         aggregate=aggregate,
+        comparison=comparison,
+        search_dimensions=search_dimensions,
         average_train_score=average_train,
         average_test_score=average_test,
         windows=windows,
@@ -547,6 +711,7 @@ def run_walk_forward(
             "每个窗口仅使用参数选择期结果选择参数，测试期参数保持冻结。",
             "测试期可读取此前 K 线作为指标预热，但测试开始前不允许持仓或收益。",
             "各测试窗口从空仓开始，窗口收益按复利顺序拼接。",
+            "固定参数基线使用输入策略的原始周期与止损，不参与任何窗口选优。",
             "参数稳定性和过拟合风险属于研究诊断，不构成统计显著性证明。",
             *loaded.assumptions,
         ],
@@ -555,6 +720,8 @@ def run_walk_forward(
             "PASS: test bars never participate in parameter selection.",
             "PASS: selected parameters remain frozen throughout each test window.",
             "PASS: all candidate trials use the same cost and execution assumptions.",
+            "PASS: tuned and fixed-baseline strategies use identical out-of-sample windows, warm-up bars, and costs.",
+            "PASS: baseline parameters remain frozen across every out-of-sample window.",
             "PASS: identical configuration and OHLCV fingerprints produce the same experiment ID.",
             *loaded.audit,
             *loaded.quality.checks,
