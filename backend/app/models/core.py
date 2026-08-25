@@ -430,3 +430,28 @@ class AgentModelCall(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     run: Mapped[AgentRun] = relationship(back_populates="model_calls")
+
+
+class JournalEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "journal_entries"
+    __table_args__ = (
+        UniqueConstraint("entry_date", name="uq_journal_entries_entry_date"),
+        Index("ix_journal_entries_entry_date", "entry_date"),
+    )
+
+    entry_date: Mapped[date] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="draft",
+        server_default="draft",
+    )
+    market_phase: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    market_notes: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    focus: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    targets: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    trade_plan: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    daily_summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    ai_review: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    ai_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    client_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

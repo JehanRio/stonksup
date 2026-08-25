@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -13,6 +13,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import {
+  JournalEntryRecord,
+  saveJournalEntry,
+  syncJournalEntries,
+} from '../../services/journalApi';
 
 type LedgerTab = 'overview' | 'stats' | 'bills' | 'assets' | 'journal' | 'report';
 type Period = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
@@ -52,19 +57,8 @@ type LedgerState = {
   transactions: LedgerTransaction[];
 };
 
-type JournalEntry = {
-  date: string;
-  status: 'draft' | 'completed';
-  marketPhase: string;
-  marketNotes: string;
-  focus: string;
-  targets: string;
-  tradePlan: string;
-  dailySummary: string;
-  aiReview: string;
-  aiUpdatedAt: string | null;
-  updatedAt: string;
-};
+type JournalEntry = JournalEntryRecord;
+type JournalSyncStatus = 'loading' | 'saved' | 'saving' | 'offline';
 
 type NetWorthPoint = {
   date: string;
@@ -946,6 +940,10 @@ const LedgerPage: React.FC = () => {
   const [period, setPeriod] = useState<Period>('all');
   const [state, setState] = useState<LedgerState>(loadLedgerState);
   const [journalEntries, setJournalEntries] = useState<Record<string, JournalEntry>>(loadJournalEntries);
+  const [journalSyncStatus, setJournalSyncStatus] = useState<JournalSyncStatus>('loading');
+  const journalSyncReady = useRef(false);
+  const journalSaveTimers = useRef<Record<string, number>>({});
+  const pendingJournalEntries = useRef<Record<string, JournalEntry>>({});
   const [selectedJournalDate, setSelectedJournalDate] = useState(todayKey());
   const [billSource, setBillSource] = useState<ImportSource>('微信');
   const [assetSource, setAssetSource] = useState<ImportSource>('手工');
@@ -989,6 +987,49 @@ const LedgerPage: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(journalEntries));
   }, [journalEntries]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const localEntries = Object.values(loadJournalEntries());
+
+    syncJournalEntries(localEntries)
+      .then((entries) => {
+        if (cancelled) return;
+        const merged = Object.fromEntries(entries.map((entry) => [entry.date, entry])) as Record<string, JournalEntry>;
+        const pending = Object.values(pendingJournalEntries.current);
+        pending.forEach((entry) => {
+          const remote = merged[entry.date];
+          if (!remote || entry.updatedAt >= remote.updatedAt) merged[entry.date] = entry;
+        });
+        setJournalEntries(merged);
+        journalSyncReady.current = true;
+
+        if (pending.length === 0) {
+          setJournalSyncStatus('saved');
+          return;
+        }
+        setJournalSyncStatus('saving');
+        Promise.all(pending.map(saveJournalEntry))
+          .then(() => {
+            pendingJournalEntries.current = {};
+            if (!cancelled) setJournalSyncStatus('saved');
+          })
+          .catch(() => {
+            if (!cancelled) setJournalSyncStatus('offline');
+          });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          journalSyncReady.current = true;
+          setJournalSyncStatus('offline');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      Object.values(journalSaveTimers.current).forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
 
   const netWorthSeries = useMemo(() => buildNetWorthSeries(state.assets), [state.assets]);
   const chartSeries = useMemo(() => groupSeriesByPeriod(netWorthSeries, period), [netWorthSeries, period]);
@@ -1081,6 +1122,19 @@ const LedgerPage: React.FC = () => {
         updatedAt: nowIso(),
       };
       next.status = computeJournalCompletion(next) >= 70 ? 'completed' : 'draft';
+
+      if (journalSyncReady.current) {
+        window.clearTimeout(journalSaveTimers.current[selectedJournalDate]);
+        setJournalSyncStatus('saving');
+        journalSaveTimers.current[selectedJournalDate] = window.setTimeout(() => {
+          saveJournalEntry(next)
+            .then(() => setJournalSyncStatus('saved'))
+            .catch(() => setJournalSyncStatus('offline'));
+        }, 700);
+      } else {
+        pendingJournalEntries.current[selectedJournalDate] = next;
+      }
+
       return {
         ...current,
         [selectedJournalDate]: next,
@@ -1583,8 +1637,22 @@ const LedgerPage: React.FC = () => {
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/35">Daily Review</div>
             <h2 className="mt-1 text-xl font-semibold text-white">{selectedJournalDate}</h2>
           </div>
-          <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs font-semibold text-white/55">
-            {selectedJournalEntry.status === 'completed' ? '已完成' : '草稿'}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+              journalSyncStatus === 'offline'
+                ? 'border-amber-300/20 bg-amber-300/[0.08] text-amber-100/80'
+                : 'border-sky-300/20 bg-sky-300/[0.08] text-sky-100/75'
+            }`}>
+              {{
+                loading: '正在同步数据库',
+                saving: '正在保存',
+                saved: '云端已保存',
+                offline: '仅保存在本机',
+              }[journalSyncStatus]}
+            </div>
+            <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs font-semibold text-white/55">
+              {selectedJournalEntry.status === 'completed' ? '已完成' : '草稿'}
+            </div>
           </div>
         </div>
         <div className="space-y-4 p-5">
