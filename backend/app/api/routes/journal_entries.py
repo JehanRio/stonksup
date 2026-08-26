@@ -1,14 +1,17 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db_session, success_response
+from app.api.dependencies import get_app_settings, get_db_session, success_response
+from app.core.config import Settings
 from app.schemas.common import ApiResponse
 from app.schemas.journal_entries import (
     JournalEntryCollection,
+    JournalAnalysisResult,
     JournalEntryPayload,
     JournalEntryView,
     JournalSyncRequest,
 )
+from app.services.journal_analysis import analyze_journal_entry
 from app.services.journal_entries import (
     lock_journal_plan,
     list_journal_entries,
@@ -68,3 +71,13 @@ def unlock_plan(
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[JournalEntryView]:
     return success_response(request, unlock_journal_plan(session, entry_date))
+
+
+@router.post("/{entry_date}/analyze", response_model=ApiResponse[JournalAnalysisResult])
+def analyze_entry(
+    entry_date: str,
+    request: Request,
+    settings: Settings = Depends(get_app_settings),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[JournalAnalysisResult]:
+    return success_response(request, analyze_journal_entry(session, settings, entry_date))

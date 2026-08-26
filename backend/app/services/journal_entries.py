@@ -71,6 +71,7 @@ def _to_view(row: JournalEntry) -> JournalEntryView:
         updated_at=row.client_updated_at, saved_at=row.updated_at,
         plan_is_locked=row.plan_is_locked, plan_locked_at=row.plan_locked_at,
         plan_revision=row.plan_revision, plan_history=row.plan_history or [],
+        ai_evidence=row.ai_evidence or [],
     )
 
 

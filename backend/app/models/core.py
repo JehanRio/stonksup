@@ -468,6 +468,9 @@ class JournalEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     postmarket_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ai_review: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    ai_evidence: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     ai_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     client_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

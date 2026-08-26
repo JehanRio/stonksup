@@ -45,6 +45,27 @@ class JournalEntryView(JournalEntryPayload):
     plan_locked_at: datetime | None
     plan_revision: int
     plan_history: list[dict[str, Any]]
+    ai_evidence: list[dict[str, Any]]
+
+
+class JournalMarketEvidence(BaseModel):
+    symbol: str
+    as_of: date
+    close: float
+    day_change_pct: float | None
+    ema20: float | None
+    atr14: float | None
+    high_20d: float | None
+    low_20d: float | None
+    volume_ratio_20d: float | None
+    data_source: str = "twelvedata:daily_adjusted"
+
+
+class JournalAnalysisResult(BaseModel):
+    analysis: str
+    generated_at: datetime
+    evidence: list[JournalMarketEvidence]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class JournalSyncRequest(BaseModel):

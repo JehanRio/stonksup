@@ -31,8 +31,29 @@ export type JournalEntryRecord = {
   planRevision: number;
   planHistory: Array<Record<string, unknown>>;
   aiReview: string;
+  aiEvidence: JournalMarketEvidence[];
   aiUpdatedAt: string | null;
   updatedAt: string;
+};
+
+export type JournalMarketEvidence = {
+  symbol: string;
+  asOf: string;
+  close: number;
+  dayChangePct: number | null;
+  ema20: number | null;
+  atr14: number | null;
+  high20d: number | null;
+  low20d: number | null;
+  volumeRatio20d: number | null;
+  dataSource: string;
+};
+
+export type JournalAnalysisResult = {
+  analysis: string;
+  generatedAt: string;
+  evidence: JournalMarketEvidence[];
+  warnings: string[];
 };
 
 type Envelope<Data> = { success: boolean; data: Data | null; error: { message: string } | null };
@@ -83,7 +104,18 @@ const fromApiEntry = (entry: any): JournalEntryRecord => ({
   })) : [],
   planIsLocked: Boolean(entry.plan_is_locked), planLockedAt: entry.plan_locked_at || null,
   planRevision: Number(entry.plan_revision || 0), planHistory: entry.plan_history || [],
-  aiReview: entry.ai_review || '', aiUpdatedAt: entry.ai_updated_at || null, updatedAt: entry.updated_at,
+  aiReview: entry.ai_review || '',
+  aiEvidence: Array.isArray(entry.ai_evidence) ? entry.ai_evidence.map((item: any) => ({
+    symbol: item.symbol, asOf: item.as_of, close: Number(item.close),
+    dayChangePct: item.day_change_pct == null ? null : Number(item.day_change_pct),
+    ema20: item.ema20 == null ? null : Number(item.ema20),
+    atr14: item.atr14 == null ? null : Number(item.atr14),
+    high20d: item.high_20d == null ? null : Number(item.high_20d),
+    low20d: item.low_20d == null ? null : Number(item.low_20d),
+    volumeRatio20d: item.volume_ratio_20d == null ? null : Number(item.volume_ratio_20d),
+    dataSource: item.data_source,
+  })) : [],
+  aiUpdatedAt: entry.ai_updated_at || null, updatedAt: entry.updated_at,
 });
 
 export const syncJournalEntries = async (entries: JournalEntryRecord[]) => {
@@ -106,3 +138,22 @@ export const lockJournalPlan = async (entry: JournalEntryRecord) =>
 
 export const unlockJournalPlan = async (date: string) =>
   fromApiEntry(await request<any>(`/api/v1/journal-entries/${encodeURIComponent(date)}/plan/unlock`, { method: 'POST' }));
+
+export const analyzeJournalEntry = async (date: string): Promise<JournalAnalysisResult> => {
+  const result = await request<any>(`/api/v1/journal-entries/${encodeURIComponent(date)}/analyze`, { method: 'POST' });
+  return {
+    analysis: result.analysis,
+    generatedAt: result.generated_at,
+    evidence: (result.evidence || []).map((item: any) => ({
+      symbol: item.symbol, asOf: item.as_of, close: Number(item.close),
+      dayChangePct: item.day_change_pct == null ? null : Number(item.day_change_pct),
+      ema20: item.ema20 == null ? null : Number(item.ema20),
+      atr14: item.atr14 == null ? null : Number(item.atr14),
+      high20d: item.high_20d == null ? null : Number(item.high_20d),
+      low20d: item.low_20d == null ? null : Number(item.low_20d),
+      volumeRatio20d: item.volume_ratio_20d == null ? null : Number(item.volume_ratio_20d),
+      dataSource: item.data_source,
+    })),
+    warnings: result.warnings || [],
+  };
+};

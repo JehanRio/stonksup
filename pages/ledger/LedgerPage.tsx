@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Area,
   AreaChart,
@@ -16,6 +18,7 @@ import {
 import {
   JournalEntryRecord,
   JournalTradeRecord,
+  analyzeJournalEntry,
   lockJournalPlan,
   saveJournalEntry,
   syncJournalEntries,
@@ -719,6 +722,7 @@ const createEmptyJournalEntry = (date: string): JournalEntry => ({
   planRevision: 0,
   planHistory: [],
   aiReview: '',
+  aiEvidence: [],
   aiUpdatedAt: null,
   updatedAt: nowIso(),
 });
@@ -750,6 +754,7 @@ const migrateJournalEntry = (entry: any, date: string): JournalEntry => {
     planRevision: Number(entry.planRevision || 0),
     planHistory: Array.isArray(entry.planHistory) ? entry.planHistory : [],
     aiReview: entry.aiReview || '',
+    aiEvidence: Array.isArray(entry.aiEvidence) ? entry.aiEvidence : [],
     aiUpdatedAt: entry.aiUpdatedAt || null,
     updatedAt: entry.updatedAt || nowIso(),
   };
@@ -980,6 +985,8 @@ const LedgerPage: React.FC = () => {
   const pendingJournalEntries = useRef<Record<string, JournalEntry>>({});
   const [selectedJournalDate, setSelectedJournalDate] = useState(todayKey());
   const [journalStage, setJournalStage] = useState<JournalStage>('pre');
+  const [journalAnalysisRunning, setJournalAnalysisRunning] = useState(false);
+  const [journalAnalysisError, setJournalAnalysisError] = useState('');
   const [billSource, setBillSource] = useState<ImportSource>('微信');
   const [assetSource, setAssetSource] = useState<ImportSource>('手工');
   const [importStatus, setImportStatus] = useState('等待导入真实数据');
@@ -1229,6 +1236,34 @@ const LedgerPage: React.FC = () => {
 
   const completePostmarketReview = () => {
     updateJournalEntry({ postmarketCompletedAt: nowIso(), status: 'completed' });
+  };
+
+  const runJournalAnalysis = async () => {
+    const current = { ...selectedJournalEntry, updatedAt: nowIso() };
+    let savedToCloud = false;
+    window.clearTimeout(journalSaveTimers.current[selectedJournalDate]);
+    setJournalAnalysisRunning(true);
+    setJournalAnalysisError('');
+    setJournalSyncStatus('saving');
+    try {
+      const saved = await saveJournalEntry(current);
+      savedToCloud = true;
+      replaceJournalEntry(saved);
+      const result = await analyzeJournalEntry(selectedJournalDate);
+      replaceJournalEntry({
+        ...saved,
+        aiReview: result.analysis,
+        aiEvidence: result.evidence,
+        aiUpdatedAt: result.generatedAt,
+      });
+      delete pendingJournalEntries.current[selectedJournalDate];
+      setJournalSyncStatus('saved');
+    } catch (error) {
+      setJournalAnalysisError(error instanceof Error ? error.message : '分析暂时失败，请稍后重试。');
+      setJournalSyncStatus(savedToCloud ? 'saved' : 'offline');
+    } finally {
+      setJournalAnalysisRunning(false);
+    }
   };
 
   const downloadReport = () => {
@@ -1729,7 +1764,30 @@ const LedgerPage: React.FC = () => {
           {journalStage === 'post' && <div className="space-y-4 p-5">
             <div className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.035] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-sm font-semibold text-white">用结果检验判断，不用盈亏定义对错</div><div className="mt-1 text-xs text-white/40">复盘属于所选交易日；第二天补写时请切到昨天，不要写进今天。</div></div>{selectedJournalEntry.postmarketCompletedAt ? <span className="rounded-full border border-emerald-300/20 px-3 py-1 text-xs text-emerald-100">完成于 {new Date(selectedJournalEntry.postmarketCompletedAt).toLocaleString('zh-CN')}</span> : null}</div></div>
             {postmarketFields.map((field) => <div key={field.key} className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><label className="mb-2 block text-sm font-semibold text-white/85">{field.label}</label><textarea value={selectedJournalEntry[field.key] as string} onChange={(event) => updateJournalEntry({ [field.key]: event.target.value } as Partial<JournalEntry>)} rows={field.rows} placeholder={field.placeholder} className={textareaClass} /></div>)}
-            {selectedJournalEntry.aiReview && <div className="rounded-lg border border-violet-300/15 bg-violet-300/[0.04] p-4"><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-200/60">AI Review</div><div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-white/65">{selectedJournalEntry.aiReview}</div></div>}
+            <div className="overflow-hidden rounded-lg border border-violet-300/20 bg-[linear-gradient(145deg,rgba(139,92,246,0.08),rgba(8,11,16,0.72))]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-violet-200/10 px-4 py-4">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-200/60">Evidence-backed AI Review</div>
+                  <div className="mt-1 text-sm font-semibold text-white">用最新日线证据复核计划与成交</div>
+                  <div className="mt-1 text-xs text-white/35">自动读取目标代码和逐笔交易；分析前会先保存当前日记。</div>
+                </div>
+                <button type="button" disabled={journalAnalysisRunning} onClick={runJournalAnalysis} className="rounded-md border border-violet-200/25 bg-violet-300/15 px-4 py-2 text-sm font-bold text-violet-100 transition hover:bg-violet-300/25 disabled:cursor-wait disabled:opacity-60">
+                  {journalAnalysisRunning ? '正在获取行情并分析…' : selectedJournalEntry.aiReview ? '重新分析最新数据' : '生成有证据的复盘'}
+                </button>
+              </div>
+              {journalAnalysisError && <div className="border-b border-rose-300/15 bg-rose-300/[0.06] px-4 py-3 text-sm text-rose-100/80">{journalAnalysisError}</div>}
+              {selectedJournalEntry.aiEvidence.length > 0 && <div className="grid gap-px border-b border-white/10 bg-white/10 sm:grid-cols-2 xl:grid-cols-3">
+                {selectedJournalEntry.aiEvidence.map((item) => <div key={item.symbol} className="bg-[#0c1118] p-4">
+                  <div className="flex items-baseline justify-between gap-2"><span className="font-mono text-base font-bold text-white">{item.symbol}</span><span className="text-[10px] text-white/30">截至 {item.asOf}</span></div>
+                  <div className="mt-3 flex items-end gap-2"><span className="font-mono text-xl font-bold text-sky-100">${item.close.toFixed(2)}</span><span className={`pb-0.5 text-xs font-semibold ${(item.dayChangePct || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{item.dayChangePct == null ? '—' : `${item.dayChangePct >= 0 ? '+' : ''}${item.dayChangePct.toFixed(2)}%`}</span></div>
+                  <div className="mt-3 grid grid-cols-2 gap-y-1 font-mono text-[10px] text-white/40"><span>EMA20 {item.ema20?.toFixed(2) || '—'}</span><span>ATR14 {item.atr14?.toFixed(2) || '—'}</span><span>20D LOW {item.low20d?.toFixed(2) || '—'}</span><span>20D HIGH {item.high20d?.toFixed(2) || '—'}</span></div>
+                </div>)}
+              </div>}
+              {selectedJournalEntry.aiReview ? <div className="prose prose-invert max-w-none px-5 py-5 text-sm leading-7 text-white/68 prose-headings:mt-5 prose-headings:text-white prose-h2:border-b prose-h2:border-white/10 prose-h2:pb-2 prose-h2:text-base prose-strong:text-sky-100 prose-li:my-1">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedJournalEntry.aiReview}</ReactMarkdown>
+                {selectedJournalEntry.aiUpdatedAt && <div className="mt-5 border-t border-white/10 pt-3 text-[10px] uppercase tracking-[0.14em] text-white/25">生成于 {new Date(selectedJournalEntry.aiUpdatedAt).toLocaleString('zh-CN')} · 数据源 Twelve Data 日线</div>}
+              </div> : <div className="px-5 py-8 text-center text-sm text-white/30">尚未生成分析。填写目标代码或交易明细后即可开始。</div>}
+            </div>
             <div className="flex justify-end"><button type="button" onClick={completePostmarketReview} className="rounded-md bg-emerald-300 px-5 py-2.5 text-sm font-bold text-[#06130e] hover:bg-emerald-200">{selectedJournalEntry.postmarketCompletedAt ? '更新完成时间' : '完成盘后复盘'}</button></div>
           </div>}
         </section>
