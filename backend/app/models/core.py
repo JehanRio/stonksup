@@ -452,6 +452,46 @@ class JournalEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     targets: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     trade_plan: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     daily_summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    market_outcome: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    execution_notes: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    plan_adherence: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    lessons: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    next_improvement: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    max_daily_loss_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    plan_is_locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    plan_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    plan_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    plan_history: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    postmarket_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ai_review: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     ai_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     client_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    trades: Mapped[list[JournalTrade]] = relationship(
+        back_populates="journal_entry",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="JournalTrade.executed_at, JournalTrade.created_at",
+    )
+
+
+class JournalTrade(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "journal_trades"
+    __table_args__ = (Index("ix_journal_trades_entry_symbol", "journal_entry_id", "symbol"),)
+
+    journal_entry_id: Mapped[UUID] = mapped_column(
+        ForeignKey("journal_entries.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
+    side: Mapped[str] = mapped_column(String(12), nullable=False, default="buy", server_default="buy")
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
+    planned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
+    journal_entry: Mapped[JournalEntry] = relationship(back_populates="trades")

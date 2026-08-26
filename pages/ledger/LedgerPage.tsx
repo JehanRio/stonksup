@@ -15,8 +15,11 @@ import {
 } from 'recharts';
 import {
   JournalEntryRecord,
+  JournalTradeRecord,
+  lockJournalPlan,
   saveJournalEntry,
   syncJournalEntries,
+  unlockJournalPlan,
 } from '../../services/journalApi';
 
 type LedgerTab = 'overview' | 'stats' | 'bills' | 'assets' | 'journal' | 'report';
@@ -59,6 +62,7 @@ type LedgerState = {
 
 type JournalEntry = JournalEntryRecord;
 type JournalSyncStatus = 'loading' | 'saved' | 'saving' | 'offline';
+type JournalStage = 'pre' | 'execution' | 'post';
 
 type NetWorthPoint = {
   date: string;
@@ -125,7 +129,7 @@ const reportRanges = [
   { id: 'all', label: '全部' },
 ] as const;
 
-const journalFields: Array<{ key: keyof JournalEntry; label: string; placeholder: string; rows: number }> = [
+const premarketFields: Array<{ key: keyof JournalEntry; label: string; placeholder: string; rows: number }> = [
   {
     key: 'marketNotes',
     label: '大盘与情绪',
@@ -150,12 +154,14 @@ const journalFields: Array<{ key: keyof JournalEntry; label: string; placeholder
     placeholder: '买入条件、仓位、止盈止损、不同开盘情境下的应对',
     rows: 6,
   },
-  {
-    key: 'dailySummary',
-    label: '今日总结',
-    placeholder: '做对了什么、失误在哪里、明天要修正哪件事',
-    rows: 4,
-  },
+];
+
+const postmarketFields: Array<{ key: keyof JournalEntry; label: string; placeholder: string; rows: number }> = [
+  { key: 'marketOutcome', label: '市场实际走势', placeholder: '实际指数、量能、主线与盘前判断有哪些差异', rows: 4 },
+  { key: 'dailySummary', label: '今日总结', placeholder: '今天发生了什么，最终盈亏与主要原因', rows: 4 },
+  { key: 'planAdherence', label: '计划执行度', placeholder: '哪些交易按计划，哪些是临盘冲动；为什么偏离', rows: 4 },
+  { key: 'lessons', label: '经验与错误', placeholder: '保留一个有效动作，指出一个关键错误', rows: 4 },
+  { key: 'nextImprovement', label: '下一交易日只改一件事', placeholder: '写成可执行、可验证的一句话', rows: 3 },
 ];
 
 const parseDateKey = (value: string) => {
@@ -699,7 +705,19 @@ const createEmptyJournalEntry = (date: string): JournalEntry => ({
   focus: '',
   targets: '',
   tradePlan: '',
+  maxDailyLossPct: '',
+  marketOutcome: '',
+  executionNotes: '',
   dailySummary: '',
+  planAdherence: '',
+  lessons: '',
+  nextImprovement: '',
+  postmarketCompletedAt: null,
+  trades: [],
+  planIsLocked: false,
+  planLockedAt: null,
+  planRevision: 0,
+  planHistory: [],
   aiReview: '',
   aiUpdatedAt: null,
   updatedAt: nowIso(),
@@ -718,7 +736,19 @@ const migrateJournalEntry = (entry: any, date: string): JournalEntry => {
       entry.tradePlan ||
       [entry.buyPlan, entry.sellRules, entry.contingencyPlan].filter(Boolean).join('\n') ||
       '',
+    maxDailyLossPct: entry.maxDailyLossPct == null ? '' : String(entry.maxDailyLossPct),
+    marketOutcome: entry.marketOutcome || '',
+    executionNotes: entry.executionNotes || '',
     dailySummary: entry.dailySummary || '',
+    planAdherence: entry.planAdherence || '',
+    lessons: entry.lessons || '',
+    nextImprovement: entry.nextImprovement || '',
+    postmarketCompletedAt: entry.postmarketCompletedAt || null,
+    trades: Array.isArray(entry.trades) ? entry.trades : [],
+    planIsLocked: Boolean(entry.planIsLocked),
+    planLockedAt: entry.planLockedAt || null,
+    planRevision: Number(entry.planRevision || 0),
+    planHistory: Array.isArray(entry.planHistory) ? entry.planHistory : [],
     aiReview: entry.aiReview || '',
     aiUpdatedAt: entry.aiUpdatedAt || null,
     updatedAt: entry.updatedAt || nowIso(),
@@ -739,9 +769,13 @@ const loadJournalEntries = () => {
 };
 
 const computeJournalCompletion = (entry: JournalEntry) => {
-  const fields: Array<keyof JournalEntry> = ['marketPhase', 'marketNotes', 'focus', 'targets', 'tradePlan', 'dailySummary'];
+  const fields: Array<keyof JournalEntry> = [
+    'marketPhase', 'marketNotes', 'focus', 'targets', 'tradePlan',
+    'marketOutcome', 'dailySummary', 'planAdherence', 'lessons', 'nextImprovement',
+  ];
   const done = fields.filter((field) => String(entry[field] || '').trim()).length;
-  return Math.round((done / fields.length) * 100);
+  const tradeCredit = entry.trades.length > 0 ? 1 : 0;
+  return Math.round(((done + tradeCredit) / (fields.length + 1)) * 100);
 };
 
 const buildNetWorthSeries = (assets: AssetRecord[]) => {
@@ -945,6 +979,7 @@ const LedgerPage: React.FC = () => {
   const journalSaveTimers = useRef<Record<string, number>>({});
   const pendingJournalEntries = useRef<Record<string, JournalEntry>>({});
   const [selectedJournalDate, setSelectedJournalDate] = useState(todayKey());
+  const [journalStage, setJournalStage] = useState<JournalStage>('pre');
   const [billSource, setBillSource] = useState<ImportSource>('微信');
   const [assetSource, setAssetSource] = useState<ImportSource>('手工');
   const [importStatus, setImportStatus] = useState('等待导入真实数据');
@@ -1121,7 +1156,7 @@ const LedgerPage: React.FC = () => {
         ...patch,
         updatedAt: nowIso(),
       };
-      next.status = computeJournalCompletion(next) >= 70 ? 'completed' : 'draft';
+      next.status = next.postmarketCompletedAt ? 'completed' : 'draft';
 
       if (journalSyncReady.current) {
         window.clearTimeout(journalSaveTimers.current[selectedJournalDate]);
@@ -1140,6 +1175,60 @@ const LedgerPage: React.FC = () => {
         [selectedJournalDate]: next,
       };
     });
+  };
+
+  const replaceJournalEntry = (entry: JournalEntry) => {
+    setJournalEntries((current) => ({ ...current, [entry.date]: entry }));
+    pendingJournalEntries.current[entry.date] = entry;
+  };
+
+  const handlePlanLock = async () => {
+    const entry = { ...selectedJournalEntry, updatedAt: nowIso() };
+    window.clearTimeout(journalSaveTimers.current[selectedJournalDate]);
+    setJournalSyncStatus('saving');
+    try {
+      const saved = await lockJournalPlan(entry);
+      replaceJournalEntry(saved);
+      delete pendingJournalEntries.current[saved.date];
+      setJournalSyncStatus('saved');
+      setJournalStage('execution');
+    } catch {
+      setJournalSyncStatus('offline');
+    }
+  };
+
+  const handlePlanUnlock = async () => {
+    setJournalSyncStatus('saving');
+    try {
+      const saved = await unlockJournalPlan(selectedJournalDate);
+      replaceJournalEntry(saved);
+      delete pendingJournalEntries.current[saved.date];
+      setJournalSyncStatus('saved');
+    } catch {
+      setJournalSyncStatus('offline');
+    }
+  };
+
+  const addJournalTrade = () => {
+    const trade: JournalTradeRecord = {
+      id: crypto.randomUUID(), symbol: '', side: 'buy', executedAt: null,
+      price: '', quantity: '', planned: true, note: '',
+    };
+    updateJournalEntry({ trades: [...selectedJournalEntry.trades, trade] });
+  };
+
+  const updateJournalTrade = (id: string, patch: Partial<JournalTradeRecord>) => {
+    updateJournalEntry({
+      trades: selectedJournalEntry.trades.map((trade) => trade.id === id ? { ...trade, ...patch } : trade),
+    });
+  };
+
+  const removeJournalTrade = (id: string) => {
+    updateJournalEntry({ trades: selectedJournalEntry.trades.filter((trade) => trade.id !== id) });
+  };
+
+  const completePostmarketReview = () => {
+    updateJournalEntry({ postmarketCompletedAt: nowIso(), status: 'completed' });
   };
 
   const downloadReport = () => {
@@ -1560,127 +1649,93 @@ const LedgerPage: React.FC = () => {
     </div>
   );
 
-  const renderJournal = () => (
-    <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-      <aside className="rounded-lg border border-white/10 bg-[#0f141b] p-4">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/55">Trading Journal</div>
-        <h2 className="mt-1 text-xl font-semibold text-white">交易日记</h2>
-        <div className="mt-4 grid grid-cols-[42px_minmax(0,1fr)_42px] gap-2">
-          <button
-            type="button"
-            onClick={() => setSelectedJournalDate(addDays(selectedJournalDate, -1))}
-            className="rounded-md border border-white/10 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
-            aria-label="前一天"
-          >
-            ‹
-          </button>
-          <input
-            type="date"
-            value={selectedJournalDate}
-            onChange={(event) => setSelectedJournalDate(event.target.value)}
-            className="rounded-md border border-white/10 bg-[#080b10] px-3 py-2 text-sm text-white outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => setSelectedJournalDate(addDays(selectedJournalDate, 1))}
-            className="rounded-md border border-white/10 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
-            aria-label="后一天"
-          >
-            ›
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSelectedJournalDate(todayKey())}
-          className="mt-3 w-full rounded-md border border-sky-300/20 bg-sky-300/[0.08] px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-300/[0.12]"
-        >
-          回到今天
-        </button>
-        <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-white/55">完成度</span>
-            <span className="text-sm font-semibold text-sky-100">{journalCompletion}%</span>
-          </div>
-          <div className="mt-3 h-2 rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-sky-300" style={{ width: `${journalCompletion}%` }} />
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-7 gap-1">
-          {Array.from({ length: 35 }, (_, index) => addDays(todayKey(), index - 34)).map((date) => {
-            const entry = journalEntries[date];
-            const completion = entry ? computeJournalCompletion(entry) : 0;
-            return (
-              <button
-                key={date}
-                type="button"
-                title={`${date} ${completion}%`}
-                onClick={() => setSelectedJournalDate(date)}
-                className={`aspect-square rounded-[3px] border ${
-                  date === selectedJournalDate
-                    ? 'border-sky-200 bg-sky-300'
-                    : completion >= 70
-                      ? 'border-emerald-200/30 bg-emerald-300/70'
-                      : completion > 0
-                        ? 'border-sky-300/20 bg-sky-300/30'
-                        : 'border-white/[0.06] bg-white/[0.04]'
-                }`}
-                aria-label={`${date} ${completion}%`}
-              />
-            );
-          })}
-        </div>
-      </aside>
+  const renderJournal = () => {
+    const stageMeta: Array<{ id: JournalStage; number: string; title: string; hint: string }> = [
+      { id: 'pre', number: '01', title: '盘前计划', hint: selectedJournalEntry.planIsLocked ? `已锁定 · V${selectedJournalEntry.planRevision}` : '等待锁定' },
+      { id: 'execution', number: '02', title: '交易执行', hint: `${selectedJournalEntry.trades.length} 笔记录` },
+      { id: 'post', number: '03', title: '盘后复盘', hint: selectedJournalEntry.postmarketCompletedAt ? '复盘完成' : '等待复盘' },
+    ];
+    const textareaClass = 'w-full resize-none rounded-md border border-white/10 bg-[#080b10] px-3 py-2.5 text-sm leading-7 text-white outline-none placeholder:text-white/25 focus:border-sky-300/45 disabled:cursor-not-allowed disabled:bg-black/20 disabled:text-white/45';
+    const inputClass = 'w-full rounded-md border border-white/10 bg-[#080b10] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/45 disabled:cursor-not-allowed disabled:bg-black/20 disabled:text-white/45';
 
-      <section className="rounded-lg border border-white/10 bg-[#0f141b]">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/35">Daily Review</div>
-            <h2 className="mt-1 text-xl font-semibold text-white">{selectedJournalDate}</h2>
+    return (
+      <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="h-fit rounded-lg border border-white/10 bg-[#0f141b] p-4 xl:sticky xl:top-24">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/55">Trading Journal</div>
+          <h2 className="mt-1 text-xl font-semibold text-white">交易日记</h2>
+          <div className="mt-4 grid grid-cols-[42px_minmax(0,1fr)_42px] gap-2">
+            <button type="button" onClick={() => setSelectedJournalDate(addDays(selectedJournalDate, -1))} className="rounded-md border border-white/10 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]" aria-label="前一天">‹</button>
+            <input type="date" value={selectedJournalDate} onChange={(event) => setSelectedJournalDate(event.target.value)} className="rounded-md border border-white/10 bg-[#080b10] px-3 py-2 text-sm text-white outline-none" />
+            <button type="button" onClick={() => setSelectedJournalDate(addDays(selectedJournalDate, 1))} className="rounded-md border border-white/10 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]" aria-label="后一天">›</button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-              journalSyncStatus === 'offline'
-                ? 'border-amber-300/20 bg-amber-300/[0.08] text-amber-100/80'
-                : 'border-sky-300/20 bg-sky-300/[0.08] text-sky-100/75'
-            }`}>
-              {{
-                loading: '正在同步数据库',
-                saving: '正在保存',
-                saved: '云端已保存',
-                offline: '仅保存在本机',
-              }[journalSyncStatus]}
-            </div>
-            <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs font-semibold text-white/55">
-              {selectedJournalEntry.status === 'completed' ? '已完成' : '草稿'}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => { setSelectedJournalDate(todayKey()); setJournalStage('pre'); }} className="rounded-md border border-sky-300/20 bg-sky-300/[0.08] px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-300/[0.12]">今天计划</button>
+            <button type="button" onClick={() => { setSelectedJournalDate(addDays(todayKey(), -1)); setJournalStage('post'); }} className="rounded-md border border-amber-300/20 bg-amber-300/[0.07] px-3 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-300/[0.12]">补写昨日复盘</button>
+          </div>
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+            <div className="flex items-center justify-between gap-3"><span className="text-sm text-white/55">记录完整度</span><span className="text-sm font-semibold text-sky-100">{journalCompletion}%</span></div>
+            <div className="mt-3 h-1.5 rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-300" style={{ width: `${journalCompletion}%` }} /></div>
+          </div>
+          <div className="mt-4 grid grid-cols-7 gap-1">
+            {Array.from({ length: 35 }, (_, index) => addDays(todayKey(), index - 34)).map((date) => {
+              const entry = journalEntries[date];
+              const completion = entry ? computeJournalCompletion(entry) : 0;
+              return <button key={date} type="button" title={`${date} ${completion}%`} onClick={() => setSelectedJournalDate(date)} className={`aspect-square rounded-[3px] border ${date === selectedJournalDate ? 'border-sky-200 bg-sky-300' : entry?.postmarketCompletedAt ? 'border-emerald-200/30 bg-emerald-300/70' : completion > 0 ? 'border-sky-300/20 bg-sky-300/30' : 'border-white/[0.06] bg-white/[0.04]'}`} aria-label={`${date} ${completion}%`} />;
+            })}
+          </div>
+          <div className="mt-4 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">绿色：已完成复盘 · 蓝色：记录中<br />每个日期独立保存，不再混写昨天和今天。</div>
+        </aside>
+
+        <section className="overflow-hidden rounded-lg border border-white/10 bg-[#0f141b]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
+            <div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/35">Decision Record</div><h2 className="mt-1 text-xl font-semibold text-white">{selectedJournalDate}</h2></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${journalSyncStatus === 'offline' ? 'border-amber-300/20 bg-amber-300/[0.08] text-amber-100/80' : 'border-sky-300/20 bg-sky-300/[0.08] text-sky-100/75'}`}>{{ loading: '正在同步数据库', saving: '正在保存', saved: '云端已保存', offline: '仅保存在本机' }[journalSyncStatus]}</div>
+              <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${selectedJournalEntry.postmarketCompletedAt ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-100' : selectedJournalEntry.planIsLocked ? 'border-amber-300/20 bg-amber-300/[0.08] text-amber-100' : 'border-white/10 bg-white/[0.03] text-white/55'}`}>{selectedJournalEntry.postmarketCompletedAt ? '已复盘' : selectedJournalEntry.planIsLocked ? '待复盘' : '盘前未锁定'}</div>
             </div>
           </div>
-        </div>
-        <div className="space-y-4 p-5">
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-            <label className="mb-2 block text-sm font-semibold text-white/85">市场阶段</label>
-            <input
-              value={selectedJournalEntry.marketPhase}
-              onChange={(event) => updateJournalEntry({ marketPhase: event.target.value })}
-              placeholder="例如 发酵期 / 高潮期 / 退潮期 / 修复期"
-              className="w-full rounded-md border border-white/10 bg-[#080b10] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/45"
-            />
+
+          <div className="grid border-b border-white/10 md:grid-cols-3">
+            {stageMeta.map((stage) => <button key={stage.id} type="button" onClick={() => setJournalStage(stage.id)} className={`relative border-b px-5 py-4 text-left transition md:border-b-0 md:border-r ${journalStage === stage.id ? 'bg-sky-300/[0.08]' : 'hover:bg-white/[0.025]'}`}>
+              {journalStage === stage.id && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-sky-300" />}
+              <div className="flex items-start gap-3"><span className={`font-mono text-xs ${journalStage === stage.id ? 'text-sky-200' : 'text-white/25'}`}>{stage.number}</span><span><span className={`block text-sm font-semibold ${journalStage === stage.id ? 'text-white' : 'text-white/55'}`}>{stage.title}</span><span className="mt-1 block text-xs text-white/30">{stage.hint}</span></span></div>
+            </button>)}
           </div>
-          {journalFields.map((field) => (
-            <div key={field.key} className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-              <label className="mb-2 block text-sm font-semibold text-white/85">{field.label}</label>
-              <textarea
-                value={selectedJournalEntry[field.key] as string}
-                onChange={(event) => updateJournalEntry({ [field.key]: event.target.value } as Partial<JournalEntry>)}
-                rows={field.rows}
-                placeholder={field.placeholder}
-                className="w-full resize-none rounded-md border border-white/10 bg-[#080b10] px-3 py-2.5 text-sm leading-7 text-white outline-none placeholder:text-white/25 focus:border-sky-300/45"
-              />
+
+          {journalStage === 'pre' && <div className="space-y-4 p-5">
+            <div className={`rounded-lg border p-4 ${selectedJournalEntry.planIsLocked ? 'border-emerald-300/20 bg-emerald-300/[0.05]' : 'border-amber-300/20 bg-amber-300/[0.05]'}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-sm font-semibold text-white">{selectedJournalEntry.planIsLocked ? '盘前计划已锁定' : '先写判断，再锁定计划'}</div><div className="mt-1 text-xs text-white/40">{selectedJournalEntry.planIsLocked ? `版本 V${selectedJournalEntry.planRevision} · 锁定后盘中无法悄悄改写` : '锁定会在数据库保留版本快照，用来对照盘后执行。'}</div></div>{selectedJournalEntry.planIsLocked ? <button type="button" onClick={handlePlanUnlock} className="rounded-md border border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-semibold text-white/70 hover:bg-white/[0.08]">解锁修订</button> : <button type="button" onClick={handlePlanLock} className="rounded-md bg-amber-300 px-4 py-2 text-sm font-bold text-[#171006] hover:bg-amber-200">锁定盘前计划</button>}</div>
             </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><label className="mb-2 block text-sm font-semibold text-white/85">市场阶段</label><input disabled={selectedJournalEntry.planIsLocked} value={selectedJournalEntry.marketPhase} onChange={(event) => updateJournalEntry({ marketPhase: event.target.value })} placeholder="发酵期 / 高潮期 / 退潮期 / 修复期" className={inputClass} /></div>
+              <div className="rounded-lg border border-rose-300/15 bg-rose-300/[0.025] p-4"><label className="mb-2 block text-sm font-semibold text-white/85">单日最大亏损 %</label><input disabled={selectedJournalEntry.planIsLocked} type="number" min="0" max="100" step="0.1" value={selectedJournalEntry.maxDailyLossPct} onChange={(event) => updateJournalEntry({ maxDailyLossPct: event.target.value })} placeholder="例如 1.5" className={inputClass} /></div>
+            </div>
+            {premarketFields.map((field) => <div key={field.key} className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><label className="mb-2 block text-sm font-semibold text-white/85">{field.label}</label><textarea disabled={selectedJournalEntry.planIsLocked} value={selectedJournalEntry[field.key] as string} onChange={(event) => updateJournalEntry({ [field.key]: event.target.value } as Partial<JournalEntry>)} rows={field.rows} placeholder={field.placeholder} className={textareaClass} /></div>)}
+            {selectedJournalEntry.planHistory.length > 0 && <details className="rounded-lg border border-white/10 bg-black/10 p-4"><summary className="cursor-pointer text-sm font-semibold text-white/60">查看计划版本记录（{selectedJournalEntry.planHistory.length}）</summary><div className="mt-3 space-y-2 text-xs text-white/40">{selectedJournalEntry.planHistory.map((revision, index) => <div key={index} className="rounded border border-white/10 px-3 py-2">V{String(revision.revision || index + 1)} · {revision.locked_at ? new Date(String(revision.locked_at)).toLocaleString('zh-CN') : '已保存'}</div>)}</div></details>}
+          </div>}
+
+          {journalStage === 'execution' && <div className="space-y-4 p-5">
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold text-white">逐笔交易记录</h3><p className="mt-1 text-xs text-white/40">价格、数量和是否符合计划将成为后续统计与 AI 分析的证据。</p></div><button type="button" onClick={addJournalTrade} className="rounded-md bg-sky-300 px-4 py-2 text-sm font-bold text-[#06111c] hover:bg-sky-200">＋ 新增交易</button></div>
+            {selectedJournalEntry.trades.length === 0 ? <button type="button" onClick={addJournalTrade} className="flex min-h-44 w-full flex-col items-center justify-center rounded-lg border border-dashed border-white/12 bg-white/[0.02] text-white/35 hover:border-sky-300/30 hover:text-sky-100/70"><span className="text-2xl">＋</span><span className="mt-2 text-sm">记录第一笔交易</span></button> : <div className="space-y-3">{selectedJournalEntry.trades.map((trade, index) => <div key={trade.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><div className="mb-3 flex items-center justify-between"><span className="font-mono text-xs text-sky-200/60">TRADE {String(index + 1).padStart(2, '0')}</span><button type="button" onClick={() => removeJournalTrade(trade.id)} className="text-xs text-rose-200/55 hover:text-rose-200">删除</button></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+              <label className="text-xs text-white/45">代码<input value={trade.symbol} onChange={(event) => updateJournalTrade(trade.id, { symbol: event.target.value.toUpperCase() })} placeholder="MRNA" className={`${inputClass} mt-1 font-mono uppercase`} /></label>
+              <label className="text-xs text-white/45">方向<select value={trade.side} onChange={(event) => updateJournalTrade(trade.id, { side: event.target.value as JournalTradeRecord['side'] })} className={`${inputClass} mt-1`}><option value="buy">买入</option><option value="sell">卖出</option><option value="short">做空</option><option value="cover">平空</option></select></label>
+              <label className="text-xs text-white/45 xl:col-span-2">成交时间<input type="datetime-local" value={trade.executedAt ? trade.executedAt.slice(0, 16) : ''} onChange={(event) => updateJournalTrade(trade.id, { executedAt: event.target.value ? new Date(event.target.value).toISOString() : null })} className={`${inputClass} mt-1`} /></label>
+              <label className="text-xs text-white/45">成交价<input type="number" min="0" step="0.0001" value={trade.price} onChange={(event) => updateJournalTrade(trade.id, { price: event.target.value })} placeholder="0.00" className={`${inputClass} mt-1`} /></label>
+              <label className="text-xs text-white/45">数量<input type="number" min="0" step="0.01" value={trade.quantity} onChange={(event) => updateJournalTrade(trade.id, { quantity: event.target.value })} placeholder="0" className={`${inputClass} mt-1`} /></label>
+            </div><div className="mt-3 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]"><label className="flex items-center gap-2 rounded-md border border-white/10 bg-black/15 px-3 text-sm text-white/65"><input type="checkbox" checked={trade.planned} onChange={(event) => updateJournalTrade(trade.id, { planned: event.target.checked })} className="accent-sky-300" />符合盘前计划</label><input value={trade.note} onChange={(event) => updateJournalTrade(trade.id, { note: event.target.value })} placeholder="触发条件、临盘判断或偏离原因" className={inputClass} /></div></div>)}</div>}
+            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><label className="mb-2 block text-sm font-semibold text-white/85">盘中执行备注</label><textarea value={selectedJournalEntry.executionNotes} onChange={(event) => updateJournalEntry({ executionNotes: event.target.value })} rows={4} placeholder="错过的机会、情绪变化、临时调整与原因" className={textareaClass} /></div>
+          </div>}
+
+          {journalStage === 'post' && <div className="space-y-4 p-5">
+            <div className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.035] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-sm font-semibold text-white">用结果检验判断，不用盈亏定义对错</div><div className="mt-1 text-xs text-white/40">复盘属于所选交易日；第二天补写时请切到昨天，不要写进今天。</div></div>{selectedJournalEntry.postmarketCompletedAt ? <span className="rounded-full border border-emerald-300/20 px-3 py-1 text-xs text-emerald-100">完成于 {new Date(selectedJournalEntry.postmarketCompletedAt).toLocaleString('zh-CN')}</span> : null}</div></div>
+            {postmarketFields.map((field) => <div key={field.key} className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><label className="mb-2 block text-sm font-semibold text-white/85">{field.label}</label><textarea value={selectedJournalEntry[field.key] as string} onChange={(event) => updateJournalEntry({ [field.key]: event.target.value } as Partial<JournalEntry>)} rows={field.rows} placeholder={field.placeholder} className={textareaClass} /></div>)}
+            {selectedJournalEntry.aiReview && <div className="rounded-lg border border-violet-300/15 bg-violet-300/[0.04] p-4"><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-200/60">AI Review</div><div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-white/65">{selectedJournalEntry.aiReview}</div></div>}
+            <div className="flex justify-end"><button type="button" onClick={completePostmarketReview} className="rounded-md bg-emerald-300 px-5 py-2.5 text-sm font-bold text-[#06130e] hover:bg-emerald-200">{selectedJournalEntry.postmarketCompletedAt ? '更新完成时间' : '完成盘后复盘'}</button></div>
+          </div>}
+        </section>
+      </div>
+    );
+  };
 
   const renderReport = () => (
     <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 
 def entry_payload(entry_date: str, summary: str, updated_at: str) -> dict[str, object]:
@@ -52,3 +53,50 @@ def test_put_rejects_date_mismatch(client) -> None:
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "journal_date_mismatch"
+
+
+def test_locked_plan_preserves_original_and_records_revisions(client) -> None:
+    original = entry_payload("2026-08-26", "", "2026-08-26T08:00:00Z")
+    original["trade_plan"] = "只在 120 以下分批买入"
+
+    locked = client.post("/api/v1/journal-entries/2026-08-26/plan/lock", json=original)
+    assert locked.status_code == 200
+    locked_entry = locked.json()["data"]
+    assert locked_entry["plan_is_locked"] is True
+    assert locked_entry["plan_revision"] == 1
+    assert locked_entry["plan_history"][0]["trade_plan"] == "只在 120 以下分批买入"
+
+    changed = {**original, "trade_plan": "追高买入", "daily_summary": "盘后内容", "updated_at": "2026-08-26T18:00:00Z"}
+    saved = client.put("/api/v1/journal-entries/2026-08-26", json=changed)
+    assert saved.status_code == 200
+    assert saved.json()["data"]["trade_plan"] == "只在 120 以下分批买入"
+    assert saved.json()["data"]["daily_summary"] == "盘后内容"
+
+    assert client.post("/api/v1/journal-entries/2026-08-26/plan/unlock").status_code == 200
+    relocked = client.post("/api/v1/journal-entries/2026-08-26/plan/lock", json=changed)
+    assert relocked.status_code == 200
+    assert relocked.json()["data"]["plan_revision"] == 2
+    assert relocked.json()["data"]["trade_plan"] == "追高买入"
+
+
+def test_structured_trades_are_persisted(client) -> None:
+    payload = entry_payload("2026-08-26", "记录 MRNA 交易", "2026-08-26T15:30:00Z")
+    trade_id = str(uuid4())
+    payload["trades"] = [{
+        "id": trade_id,
+        "symbol": "mrna",
+        "side": "buy",
+        "executed_at": "2026-08-26T14:35:00Z",
+        "price": "121.45",
+        "quantity": "20",
+        "planned": True,
+        "note": "回踩计划位",
+    }]
+
+    response = client.put("/api/v1/journal-entries/2026-08-26", json=payload)
+
+    assert response.status_code == 200
+    trade = response.json()["data"]["trades"][0]
+    assert trade["id"] == trade_id
+    assert trade["symbol"] == "MRNA"
+    assert trade["price"] == "121.45000000"
