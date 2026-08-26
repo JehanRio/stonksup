@@ -26,7 +26,7 @@ SYMBOL_STOPWORDS = {"AI", "ETF", "BUY", "SELL", "LONG", "SHORT", "USD"}
 
 def _extract_symbols(row: JournalEntry) -> list[str]:
     symbols = [trade.symbol.strip().upper() for trade in row.trades if trade.symbol.strip()]
-    target_text = row.targets.upper()
+    target_text = " ".join((row.targets, row.trade_plan, row.execution_notes)).upper()
     for alias, symbol in SYMBOL_ALIASES.items():
         if alias in target_text:
             symbols.append(symbol)

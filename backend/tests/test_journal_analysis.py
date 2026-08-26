@@ -8,6 +8,8 @@ from app.services.journal_analysis import _build_evidence, _extract_symbols
 def test_extract_symbols_maps_company_alias_and_trade_symbols() -> None:
     row = SimpleNamespace(
         targets="买 moderna、ibit，各 50% 仓位",
+        trade_plan="MRNA 回踩再买",
+        execution_notes="",
         trades=[SimpleNamespace(symbol="mrna"), SimpleNamespace(symbol="")],
     )
 
